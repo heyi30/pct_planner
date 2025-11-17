@@ -40,3 +40,8 @@ python3 plan.py
 ```
 
 - The generated trajectory is visualized as ROS Path message in RViz.
+
+# 极简化运行
+1.将planner/scripts/plan_direct.py文件中的tomogram_path = "/home/hanjiatong/PctPlanner/rsc/tomogram/scene_map.pickle"改为自己相对应的文件路径
+2.运行rsc文件夹下的publish_start_end_pos.py
+3.运行plan_direct.py
