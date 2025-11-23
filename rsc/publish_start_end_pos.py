@@ -35,7 +35,7 @@ def main(args=None):
     # start_x, start_y, start_z = -7.75, 71.84, -0.68
     # end_x, end_y, end_z = 17.11, -9.012, 9.456
     start_x, start_y, start_z = 0, 0, 0
-    end_x, end_y, end_z = 0, 2, 0
+    end_x, end_y, end_z = 1, 6, 0
 
     # Publish once and then spin to keep the node alive for a short period
     # to ensure message delivery.
