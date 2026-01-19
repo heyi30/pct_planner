@@ -36,6 +36,7 @@ python3 tomography.py
 ```bash
 export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/YOUR/DIRECTORY/TO/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib
 cd planner/scripts/
+export LD_LIBRARY_PATH=/home/unitree/navigation/PctPlanner/planner/lib/3rdparty/gtsam-4.1.1/install/lib:$LD_LIBRARY_PATH
 python3 plan.py
 ```
 

@@ -15,6 +15,30 @@ from planner_wrapper import TomogramPlanner
 sys.path.append('../')
 from config import Config
 
+def save_traj_to_csv(traj, filename):
+    """Saves a trajectory to a CSV file."""
+    import csv
+    with open(filename, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['x', 'y', 'z'])  # Header
+        for point in traj:
+            writer.writerow([point[0], point[1], point[2]])
+
+
+def load_traj_from_csv(filename):
+    """Loads a trajectory from a CSV file.
+    
+    Returns:
+        numpy array of shape (N, 3) where N is the number of points
+    """
+    import csv
+    points = []
+    with open(filename, 'r') as f:
+        reader = csv.reader(f)
+        next(reader)  # Skip header
+        for row in reader:
+            points.append([float(row[0]), float(row[1]), float(row[2])])
+    return np.array(points, dtype=np.float32)
 
 def save_traj_as_pcd(traj, filename):
     """Saves a trajectory to a .pcd file."""
@@ -43,8 +67,7 @@ class PCTPlannerSystemNode(Node):
 
         # 直接从 pickle 加载 tomogram，并初始化 planner
         #tomogram_path = "/home/hanjiatong/PctPlanner/rsc/tomogram/scene_map.pickle"
-        tomogram_path = "/home/unitree/navigation/PctPlanner/rsc/tomogram/scene_map.pickle"
-        # tomogram_path = "/home/ros/ros2_ws/PctPlanner/rsc/tomogram/scene_map.pickle"
+        tomogram_path = "/home/unitree/navigation/PctPlanner/rsc/tomogram/scene_map_v3_wide.pickle"
         self.get_logger().info(f"Loading tomogram from: {tomogram_path}")
         try:
             with open(tomogram_path, 'rb') as f:
@@ -64,33 +87,18 @@ class PCTPlannerSystemNode(Node):
         self.get_logger().info("Planner initialized from file.")
 
         # 起点位姿：初始为 (0, 0, 0)
-
-        stair_end = np.array([-28.221, -38.4062,0.6972022652626038,1.0], dtype=np.float32)
-        lobby = np.array([-33.525770568847656,-25.410804977416992,0.6448325514793396,1.0], dtype=np.float32)
-
-        self.M_loc2pct = np.array([[ 0.962,  0.273,  0.002,  11.728],
-                                [-0.273,  0.962, -0.004,  -1.289],
-                                [-0.003,  0.004,  1.000,   0.111],
-                                [ 0.000,  0.000,  0.000,   1.000]])
-
-
-        self.M_pct2loc = np.array([[ 0.962, -0.273, -0.003, -11.634],
-                            [ 0.273,  0.962,  0.004,  -1.960],
-                            [ 0.002, -0.004,  1.000,  -0.142],
-                            [ 0.000,  0.000,  0.000,   1.000]])
-
-
-        transformed_stair_end = self.M_loc2pct @ stair_end
-        transformed_lobby = self.M_loc2pct @ lobby
-        
-        # nyby yizhan dao louti       
-        self.goal_pos = transformed_lobby[:3]
-
-        self.start_pos = transformed_stair_end[:3]
-        
-        # self.goal_pos = np.array([10.7574, -8.42022, 0], dtype=np.float32)
-
-        # self.start_pos = np.array([-1.73966,-2.3373,0.0], dtype=np.float32)
+        # self.start_pos = np.array([34.1,-5.75,2.8], dtype=np.float32)
+        self.goal_pos = np.array([-37.4980208681707,3.909216925528375, 0], dtype=np.float32)
+        # self.start_pos = np.array([0.0,6.0,0.0], dtype=np.float32)
+        # 目标位姿：固定为 (1, 6, 0)
+        # self.goal_pos = np.array([17.11, -9.012, 9.456], dtype=np.float32)
+        # self.goal_pos = np.array([9.00, -9.000, 0.5], dtype=np.float32)
+        #jicang
+        self.start_pos = np.array([-43.5096, -14.308054, 0], dtype=np.float32)
+        # self.goal_pos = np.array([9.0, -9.0, 0.0], dtype=np.float32)
+        # self.goal_pos = np.array([36,-4.9,2.2], dtype=np.float32)
+        # stair case
+        # self.goal_pos = np.array([0.686, -3.69, 1.23], dtype=np.float32)
 
         self.path_pub = self.create_publisher(Path, '/pct_path2', 10)
 
@@ -99,7 +107,7 @@ class PCTPlannerSystemNode(Node):
         # 1 Hz 定时器，按固定频率发布路径
         self.publish_timer = self.create_timer(1.0, self.publish_loop)
 
-        # 订阅 /global_pose (geometry_msgs/PoseStamped)，随时更新 start_pos 并重新规划
+        # 订阅 /local_pose (geometry_msgs/PoseStamped)，随时更新 start_pos 并重新规划
         self.pose_sub = self.create_subscription(
             PoseStamped,
             '/local_pose',
@@ -136,11 +144,11 @@ class PCTPlannerSystemNode(Node):
         
         # 如果当前起点与目标距离小于 2m，则不再重新规划，只保留/发布当前轨迹
         dist = np.linalg.norm(start_pos_np[:2] - end_pos_np[:2])
-        if dist < 2.0:
-            self.get_logger().info(
-                f'Distance to goal is {dist:.2f} m (< 2 m). Skip replanning, only publishing current trajectory.'
-            )
-            return
+        # if dist < 2.0:
+        #     self.get_logger().info(
+        #         f'Distance to goal is {dist:.2f} m (< 2 m). Skip replanning, only publishing current trajectory.'
+        #     )
+        #     return
         self.get_logger().info(
             f'Planning trajectory from start {start_pos_np.tolist()} to goal {end_pos_np.tolist()}...'
         )
@@ -153,17 +161,11 @@ class PCTPlannerSystemNode(Node):
         )
 
         if traj_3d is not None:
-            self.current_traj = []
-            for p in traj_3d:
-                p_homo = np.array([p[0], p[1], p[2], 1.0])
-                p_loc = self.M_pct2loc @ p_homo
-                p_new = p_loc[:3]
-                print(p_new)
-                # 更新当前轨迹，由定时器按固定频率发布
-                self.current_traj.append(p_new)
-
+            # 更新当前轨迹，由定时器按固定频率发布
+            self.current_traj = traj_3d
             # 如果你需要保存为 pcd，可以解除下面注释
             # save_traj_as_pcd(traj_3d, 'trajectory_system.pcd')
+            save_traj_to_csv(traj_3d, "/home/unitree/navigation/PctPlanner/rsc/traj/enter_path.csv")
             self.get_logger().info('Trajectory planned. Will be published at 10 Hz to /pct_path_system.')
         else:
             self.get_logger().warn('Failed to generate a trajectory.')
