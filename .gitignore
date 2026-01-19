@@ -1,0 +1,5 @@
+planner/lib/build/
+planner/lib/*.so
+planner/lib/*.pyi
+planner/lib//install/
+planner/lib/3rdparty/osqp/install
