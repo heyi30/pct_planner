@@ -3,3 +3,5 @@ planner/lib/*.so
 planner/lib/*.pyi
 planner/lib//install/
 planner/lib/3rdparty/osqp/install
+planner/rsc/pcd/*.pcd
+planner/rsc/tomogram/*.pickle
