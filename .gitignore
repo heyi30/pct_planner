@@ -5,3 +5,4 @@ planner/lib//install/
 planner/lib/3rdparty/osqp/install
 rsc/pcd/*.pcd
 rsc/tomogram/*.pickle
+rsc/tomogram/*.bak
