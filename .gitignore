@@ -6,3 +6,6 @@ planner/lib/3rdparty/osqp/install
 rsc/pcd/*.pcd
 rsc/tomogram/*.pickle
 rsc/tomogram/*.bak
+planner/config/__pycache__/
+planner/scripts/__pycache__
+tomography/scripts/__pycache__
