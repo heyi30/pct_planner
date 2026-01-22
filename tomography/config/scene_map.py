@@ -18,5 +18,5 @@ class SceneMap():
     trav.step_max = 0.7
     trav.standable_ratio = 0.4
     trav.cost_barrier = 50.0
-    trav.safe_margin = 0.1
-    trav.inflation = 0.05
+    trav.safe_margin = 0.15
+    trav.inflation = 0.15

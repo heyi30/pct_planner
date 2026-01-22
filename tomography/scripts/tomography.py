@@ -52,7 +52,8 @@ class Tomography(Node):
             return
         
         self.get_logger().info("Received point cloud message.")
-        points = pc2.read_points_numpy(msg, skip_nans=True)
+        gen = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
+        points = np.array(list(gen), dtype=np.float32)
         if points.size == 0:
             self.get_logger().warn("Received an empty point cloud. Skipping processing.")
             return
