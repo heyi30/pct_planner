@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
+from pct_planner_msgs.srv import PlanPath as PathSrv
 import time
 
 class WaypointsPublisher(Node):
@@ -9,7 +10,7 @@ class WaypointsPublisher(Node):
         super().__init__('waypoints_publisher')
         self.waypoints_pub = self.create_publisher(Path, '/waypoints', 1)
         self.get_logger().info('Waypoints Publisher Node has been started.')
-
+        self.clent_=self.create_client(PathSrv,'/plan_path')
     def publish_waypoints(self, points):
         path_msg = Path()
         path_msg.header.frame_id = "world"
@@ -23,9 +24,18 @@ class WaypointsPublisher(Node):
             pose.pose.position.z = float(pt[2])
             pose.pose.orientation.w = 1.0
             path_msg.poses.append(pose)
-
-        self.waypoints_pub.publish(path_msg)
-        self.get_logger().info(f'Published {len(points)} waypoints to /waypoints')
+        self.clent_.wait_for_service()
+        request = PathSrv.Request()
+        request.path = path_msg
+        future = self.clent_.call_async(request)
+        rclpy.spin_until_future_complete(self,future)
+        response = future.result()
+        if response.success:
+            self.get_logger().info(f'Received planned path with {len(response.path.poses)} waypoints from /plan_path service.')
+        else:
+            self.get_logger().error('Failed to plan path via /plan_path service.')
+        # self.waypoints_pub.publish(path_msg)
+        # self.get_logger().info(f'Published {len(points)} waypoints to /waypoints')
 
 def main(args=None):
     rclpy.init(args=args)
@@ -35,12 +45,13 @@ def main(args=None):
     pts = [
         # [0.0, 0.0, 0.0],
         # [5.0, -6.0, 0.0],
+        [-0.0, 0.5, 0.0],
+        [0.3,-6.5,6.0]
+        # [0.3,-6.5,6.0],
+        # [-0.0, 0.5, 0.0]
         # [5.7, 7.3, 0.0],
-        # [-15.6, -13.5, 6.0]
-        [-15.6, -13.5, 5.5],
-        [5.7, 7.3, 0.0],
-        [5.0, -6.0, 0.0],
-        [0.0, 0.0, 0.0]
+        # [5.0, -6.0, 0.0],
+        # [0.0, 0.0, 0.0]
     ]
 
     floor_pts=[
@@ -61,9 +72,9 @@ def main(args=None):
         [-31.7,5.93,2.0]
     ]
     
-    time.sleep(1)  # Give some time for publishers to set up
-    node.publish_waypoints(shangfei_pts)
-    time.sleep(1) 
+    # time.sleep(1)  # Give some time for publishers to set up
+    node.publish_waypoints(pts)
+    # time.sleep(1) 
 
     node.destroy_node()
     rclpy.shutdown()

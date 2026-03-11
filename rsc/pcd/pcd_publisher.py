@@ -18,13 +18,26 @@ class PCDPublisher(Node):
         timer_period = 10  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
-        pcd_file = os.path.join(rsg_root, 'rsc', 'pcd', 'shangfeiV3.pcd')
+        pcd_file = os.path.join(rsg_root, 'rsc', 'pcd', 'test.pcd')
         self.get_logger().info(f"Loading PCD file from: {pcd_file}")
         
         try:
             pcd = o3d.io.read_point_cloud(pcd_file)
             points = np.asarray(pcd.points, dtype=np.float32)
             self.get_logger().info(f"Loaded {len(points)} points from PCD file.")
+            
+            # Downsample if point count exceeds 1,000,000
+            if len(points) > 1000000:
+                self.get_logger().info(f"Point count exceeds 1,000,000. Downsampling with voxel size 0.1m...")
+                pcd_downsampled = pcd.voxel_down_sample(voxel_size=0.1)
+                points = np.asarray(pcd_downsampled.points, dtype=np.float32)
+                self.get_logger().info(f"Downsampled to {len(points)} points.")
+                
+                # Save downsampled point cloud
+                downsampled_file = pcd_file.replace('.pcd', '_downsampled.pcd')
+                o3d.io.write_point_cloud(downsampled_file, pcd_downsampled)
+                self.get_logger().info(f"Saved downsampled point cloud to: {downsampled_file}")
+                
         except Exception as e:
             self.get_logger().error(f"Failed to read PCD file: {e}")
             points = []

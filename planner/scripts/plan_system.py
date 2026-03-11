@@ -18,6 +18,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Path
 from geometry_msgs.msg import Point
+from pct_planner_msgs.srv import PlanPath as PathSrv
 
 from utils import *
 from planner_wrapper import TomogramPlanner
@@ -25,27 +26,23 @@ from planner_wrapper import TomogramPlanner
 sys.path.append('../')
 from config import Config
 
-# 本地 tomogram 数据文件路径
-TOMOGRAM_FILE_PATH = "/root/numa/PctPlanner/rsc/tomogram/scene_map.pickle"
+import time
+import pandas as pd
 
-def save_traj_as_pcd(traj, filename):
+# 本地 tomogram 数据文件路径
+TOMOGRAM_FILE_PATH = "/root/numa/PctPlanner/rsc/tomogram/nyby_underground.pickle"
+
+def save_traj_as_csv(traj, filename=None):
     """
-    Saves a trajectory to a .pcd file.
+    Saves a trajectory to a .csv file with a timestamped filename.
     """
-    with open(filename, 'w') as f:
-        f.write('# .PCD v.7 - Point Cloud Data file format\n')
-        f.write('VERSION .7\n')
-        f.write('FIELDS x y z\n')
-        f.write('SIZE 4 4 4\n')
-        f.write('TYPE F F F\n')
-        f.write('COUNT 1 1 1\n')
-        f.write(f'WIDTH {len(traj)}\n')
-        f.write('HEIGHT 1\n')
-        f.write('VIEWPOINT 0 0 0 1 0 0 0\n')
-        f.write(f'POINTS {len(traj)}\n')
-        f.write('DATA ascii\n')
-        for point in traj:
-            f.write(f'{point[0]} {point[1]} {point[2]}\n')
+    if filename is None:
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        filename = f"trajectory_{timestamp}.csv"
+    
+    df = pd.DataFrame(traj, columns=['x', 'y', 'z'])
+    df.to_csv(filename, index=False)
+    return filename
 
 class PCTPlannerNode(Node):
     def __init__(self):
@@ -56,7 +53,10 @@ class PCTPlannerNode(Node):
         self.tomogram_received = False
         self.start_pos = None
         self.end_pos = None
-
+        self.server_ = self.create_service(
+            PathSrv,
+            '/plan_path',
+            self.handle_plan_path)
         # 从本地文件加载 tomogram 数据
         self._load_tomogram_from_file(TOMOGRAM_FILE_PATH)
 
@@ -114,8 +114,12 @@ class PCTPlannerNode(Node):
             
             self.get_logger().info(f"Planning segment {i}: from {p1} to {p2}")
             
-            # Use the same logic as before: z + 0.5
-            traj = self.planner.plan(p1[:2], p2[:2], p1[2] + 0.5, p2[2] + 0.5)
+            try:
+                # Use the same logic as before: z + 0.5
+                traj = self.planner.plan(p1[:2], p2[:2], p1[2] + 0.5, p2[2] + 0.5)
+            except Exception as e:
+                self.get_logger().error(f"Error during planning segment {i}: {e}")
+                return None
             
             if traj is not None:
                 if len(full_traj) > 0:
@@ -141,8 +145,29 @@ class PCTPlannerNode(Node):
             path_msg = traj2ros(traj_3d)
             path_msg.header.frame_id = "map"
             self.path_pub.publish(path_msg)
-            save_traj_as_pcd(traj_3d, 'trajectory.pcd')
-            self.get_logger().info("Multi-point trajectory published and saved.")
+            csv_file = save_traj_as_csv(traj_3d)
+            self.get_logger().info(f"Multi-point trajectory published and saved to {csv_file}.")
+    def handle_plan_path(self, request, response):
+        self.get_logger().info(f"Received {len(request.path.poses)} waypoints via service.")
+        waypoints = []
+        for pose_stamped in request.path.poses:
+            p = pose_stamped.pose.position
+            waypoints.append(np.array([p.x, p.y, p.z], dtype=np.float32))
+        
+        traj_3d = self.plan_multi_points(waypoints)
+        if traj_3d is not None:
+            path_msg = traj2ros(traj_3d)
+            path_msg.header.frame_id = "map"
+            self.path_pub.publish(path_msg)
+            # csv_file = save_traj_as_csv(traj_3d)
+            # self.get_logger().info(f"Trajectory published and saved to {csv_file}.")
+            response.path = path_msg
+            response.success = True
+            self.get_logger().info("Multi-point trajectory generated and published.")
+        else:
+            response.success = False
+            self.get_logger().error("Failed to generate multi-point trajectory.")
+        return response
 
     def start_pos_callback(self, msg):
         self.start_pos = np.array([msg.x, msg.y, msg.z], dtype=np.float32)
@@ -162,8 +187,8 @@ class PCTPlannerNode(Node):
             path_msg = traj2ros(traj_3d)
             path_msg.header.frame_id = "map"
             self.path_pub.publish(path_msg)
-            save_traj_as_pcd(traj_3d, 'trajectory.pcd')
-            self.get_logger().info("Trajectory published and saved.")
+            # csv_file = save_traj_as_csv(traj_3d)
+            self.get_logger().info(f"Trajectory published and saved to {csv_file}.")
             # Reset for next planning cycle
             self.start_pos = None
             self.end_pos = None
