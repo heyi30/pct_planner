@@ -9,3 +9,6 @@ rsc/tomogram/*.bak
 planner/config/__pycache__/
 planner/scripts/__pycache__
 tomography/scripts/__pycache__
+log
+install
+build
