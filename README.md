@@ -10,7 +10,7 @@
 
 ## Build & Install
 
-In **planner/**, run **build_thirdparty.sh** first and then run **build.sh**. 
+In **planner/**, run **build_thirdparty.sh** first and then run **build.sh**.
 
 ```bash
 cd planner/
@@ -29,7 +29,7 @@ python3 tomography.py
 
 - The generated tomogram is visualized as ROS PointCloud2 message in RViz and saved in **rsc/tomogram/**.
 
-### Trajectory Generation 
+### Trajectory Generation
 
 - In **planner/scripts/**, run **plan.py** with the **--scene** argument:
 
@@ -60,6 +60,7 @@ python3 plan_systemt.py
 ```
 
 > 在运行前，请确保：
+>
 > - `rsc/tomogram/scene_map.pickle` 已存在（可通过 `tomography.py` 生成），
 > - 有节点在 `/odom/ground_truth` 上发布 `nav_msgs/Odometry` 消息，
 > - 在 RViz 中订阅 `/pct_path_system` 可查看路径。
@@ -75,15 +76,14 @@ self.goal_pos  = np.array([1.0, 6.0, 0.0], dtype=np.float32)  # 固定终点
 
 - 如需修改**初始起点**，直接改 `self.start_pos` 中的三个数值，例如：
 
-	```python
-	self.start_pos = np.array([x0, y0, z0], dtype=np.float32)
-	```
-
+  ```python
+  self.start_pos = np.array([x0, y0, z0], dtype=np.float32)
+  ```
 - 如需修改**终点**，直接改 `self.goal_pos` 中的三个数值，例如：
 
-	```python
-	self.goal_pos = np.array([xg, yg, zg], dtype=np.float32)
-	```
+  ```python
+  self.goal_pos = np.array([xg, yg, zg], dtype=np.float32)
+  ```
 
 注意：
 
@@ -91,6 +91,7 @@ self.goal_pos  = np.array([1.0, 6.0, 0.0], dtype=np.float32)  # 固定终点
 - `goal_pos` 是**固定目标点**，只有在你修改代码并重新运行 `plan_systemt.py` 后才会改变。
 
 # 极简化运行
+
 1.将planner/scripts/plan_direct.py文件中的tomogram_path = "/home/hanjiatong/PctPlanner/rsc/tomogram/scene_map.pickle"改为自己相对应的文件路径
 2.运行rsc文件夹下的publish_start_end_pos.py
 3.运行plan_direct.py

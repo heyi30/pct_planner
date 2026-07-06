@@ -26,9 +26,9 @@ class TestController(Node):
 
         
         # Configuration
-        self.map_bounds = {'x': (-20.0, 5.0), 'y': (-20.0, 5.0)}
+        self.map_bounds = {'x': (-17.0, -15.0), 'y': (4.0, 5.0)}
         self.goal_tolerance = 1.0  # meters
-        self.test_timeout = 100.0   # seconds
+        self.test_timeout = 60.0   # seconds
         self.collision_detected = False
         self.current_pose = None
         self.goal_pose = None
@@ -39,6 +39,13 @@ class TestController(Node):
         self.plan_client = self.create_client(PathSrv, '/plan_path')
         self.reset_world_client = self.create_client(Empty, '/reset_world')
         
+        # Round-trip mode: robot walks back and forth between two fixed waypoints
+        self.round_trip = True
+        self.round_trip_initialized = False
+        self.waypoint_a = None
+        self.waypoint_b = None
+        self.current_leg = 0  # 0: A→B, 1: B→A
+
         # Timeout tracking
         self.consecutive_timeouts = 0
         self.consecutive_planning_failures = 0
@@ -140,7 +147,7 @@ class TestController(Node):
         x = random.uniform(self.map_bounds['x'][0], self.map_bounds['x'][1])
         y = random.uniform(self.map_bounds['y'][0], self.map_bounds['y'][1])
         # z = 6.0 if (-18.0 <= x <= -12.0 and -15.0 <= y <= -10.0) else 0.0
-        z=0.0
+        z=0.5
         return [x, y, z]
 
     def request_plan(self, start, end):
@@ -178,7 +185,7 @@ class TestController(Node):
             return False
         
         req = Empty.Request()
-        future = self.reset_world_client.call_async(req)
+        # future = self.reset_world_client.call_async(req)
         # We'll handle this asynchronously, just log for now
         self.get_logger().info('Called /reset_world service to reset Gazebo simulation')
         return True
@@ -232,15 +239,44 @@ class TestController(Node):
             
         elif self.state == 'PLANNING':
             # Setup Goal
-            self.start_pt = [self.current_pose.position.x, self.current_pose.position.y, self.current_pose.position.z]
-            end_pt = self.generate_random_point()
-            
+            if self.round_trip:
+                if not self.round_trip_initialized:
+                    # First run: use current position as waypoint A, random point as waypoint B
+                    self.waypoint_a = [
+                        self.current_pose.position.x,
+                        self.current_pose.position.y,
+                        self.current_pose.position.z
+                    ]
+                    self.waypoint_b = self.generate_random_point()
+                    self.round_trip_initialized = True
+                    self.current_leg = 0
+                    self.get_logger().info(
+                        f'Round-trip initialized: '
+                        f'A=({self.waypoint_a[0]:.2f}, {self.waypoint_a[1]:.2f}), '
+                        f'B=({self.waypoint_b[0]:.2f}, {self.waypoint_b[1]:.2f})'
+                    )
+                # Select start/end based on current leg
+                if self.current_leg == 0:
+                    self.start_pt = list(self.waypoint_a)
+                    end_pt = list(self.waypoint_b)
+                else:
+                    self.start_pt = list(self.waypoint_b)
+                    end_pt = list(self.waypoint_a)
+            else:
+                self.start_pt = [self.current_pose.position.x, self.current_pose.position.y, self.current_pose.position.z]
+                end_pt = self.generate_random_point()
+
             self.goal_pose = PoseStamped()
             self.goal_pose.pose.position.x = end_pt[0]
             self.goal_pose.pose.position.y = end_pt[1]
             self.goal_pose.pose.position.z = end_pt[2]
 
-            self.get_logger().info(f'Planning from ({self.start_pt[0]:.2f}, {self.start_pt[1]:.2f}) to ({end_pt[0]:.2f}, {end_pt[1]:.2f})')
+            leg_label = f'Leg {self.current_leg} (A→B)' if self.current_leg == 0 else f'Leg {self.current_leg} (B→A)'
+            self.get_logger().info(
+                f'[{leg_label if self.round_trip else "Random"}] '
+                f'Planning from ({self.start_pt[0]:.2f}, {self.start_pt[1]:.2f}) '
+                f'to ({end_pt[0]:.2f}, {end_pt[1]:.2f})'
+            )
             
             self.plan_future = self.request_plan(self.start_pt, end_pt)
             
@@ -328,6 +364,13 @@ class TestController(Node):
                         f'Collisions: {self.collision_count} (High-Force: {self.high_force_collision_count})'
                     )
                     self.save_result('SUCCESS')
+                    if self.round_trip:
+                        # Flip leg direction for the return journey
+                        self.current_leg = 1 - self.current_leg
+                        self.get_logger().info(
+                            f'Round-trip: switching to '
+                            f'{"A→B" if self.current_leg == 0 else "B→A"}'
+                        )
                     self.state = 'FINISHED'
         
         elif self.state == 'FINISHED':

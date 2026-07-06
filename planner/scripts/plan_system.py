@@ -30,7 +30,7 @@ import time
 import pandas as pd
 
 # 本地 tomogram 数据文件路径
-TOMOGRAM_FILE_PATH = "/root/numa/PctPlanner/rsc/tomogram/nyby_underground.pickle"
+TOMOGRAM_FILE_PATH = "/home/nuc/numa/PctPlanner/rsc/tomogram/nyby_underground.pickle"
 
 def save_traj_as_csv(traj, filename=None):
     """
@@ -60,7 +60,7 @@ class PCTPlannerNode(Node):
         # 从本地文件加载 tomogram 数据
         self._load_tomogram_from_file(TOMOGRAM_FILE_PATH)
 
-        self.path_pub = self.create_publisher(Path, "/pct_path", 1)
+        self.path_pub = self.create_publisher(Path, "/global_trajectory", 1)
         self.waypoints_sub = self.create_subscription(
             Path,
             "/waypoints",
@@ -187,7 +187,7 @@ class PCTPlannerNode(Node):
             path_msg = traj2ros(traj_3d)
             path_msg.header.frame_id = "map"
             self.path_pub.publish(path_msg)
-            # csv_file = save_traj_as_csv(traj_3d)
+            csv_file = save_traj_as_csv(traj_3d)
             self.get_logger().info(f"Trajectory published and saved to {csv_file}.")
             # Reset for next planning cycle
             self.start_pos = None

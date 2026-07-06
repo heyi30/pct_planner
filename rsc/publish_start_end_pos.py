@@ -32,10 +32,10 @@ def main(args=None):
 
     # Example positions (you can change these)
     # These values are taken from the original hardcoded values in plan.py
-    # start_x, start_y, start_z = -7.75, 71.84, -0.68
-    # end_x, end_y, end_z = 17.11, -9.012, 9.456
-    start_x, start_y, start_z = 0, 0, 0
-    end_x, end_y, end_z = 1, 6, 0
+    # start_x, start_y, start_z = -15, -14, 6.5
+    # end_x, end_y, end_z = -15, 5, 0
+    start_x, start_y, start_z = -15, 5, 0
+    end_x, end_y, end_z = -15, -13, 6
 
     # Publish once and then spin to keep the node alive for a short period
     # to ensure message delivery.

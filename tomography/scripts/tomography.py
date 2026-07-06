@@ -10,7 +10,8 @@ import gc
 import subprocess
 import argparse
 from array import array
-  
+
+import open3d as o3d
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Header, ByteMultiArray
@@ -22,6 +23,7 @@ from tomogram import Tomogram
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from config import POINT_FIELDS_XYZI, GRID_POINTS_XYZI
 from config import Config
+from config.scene import ScenePCD
 
 rsg_root = os.path.dirname(os.path.abspath(__file__)) + '/../..'
 
@@ -44,31 +46,30 @@ class Tomography(Node):
         tomogram_topic = cfg.ros.tomogram_topic
         self.tomogram_pub = self.create_publisher(PointCloud2, tomogram_topic, 10)
         self.tomogram_data_pub = self.create_publisher(ByteMultiArray, '/tomogram_data', 10)
-        self.pcd_sub = self.create_subscription(PointCloud2, '/global_points', self.pcd_callback, 10)
-        self.get_logger().info("Subscribing to point cloud topic: /global_points")
 
-    def pcd_callback(self, msg):
+        self.load_and_process_pcd()
+
+    def load_and_process_pcd(self):
         if self.is_initialized:
             return
-        
-        self.get_logger().info("Received point cloud message.")
-        gen = pc2.read_points(msg, field_names=("x", "y", "z"), skip_nans=True)
-        points = np.array(list(gen), dtype=np.float32)
-        if points.size == 0:
-            self.get_logger().warn("Received an empty point cloud. Skipping processing.")
+
+        pcd_file_name = getattr(self.scene_cfg.pcd, 'file_name', 'test.pcd')
+        pcd_file_path = os.path.join(rsg_root, 'rsc', 'pcd', pcd_file_name)
+
+        self.get_logger().info(f"Loading PCD file from: {pcd_file_path}")
+
+        try:
+            pcd = o3d.io.read_point_cloud(pcd_file_path)
+            points = np.asarray(pcd.points, dtype=np.float32)
+        except Exception as e:
+            self.get_logger().error(f"Failed to read PCD file: {e}")
             return
 
-        # The publisher sends x, y, z, intensity. We only need x, y, z.
-        if points.shape[1] > 3:
-            points = points[:, :3]
-        
-        # The rest of the code expects a simple Nx3 float32 array
-        points = points.astype(np.float32)
-        
-        self.get_logger().info("PCD points: %d" % points.shape[0])
+        if points.size == 0:
+            self.get_logger().warn("Loaded an empty point cloud. Skipping processing.")
+            return
 
-        if points.shape[1] > 3:
-            points = points[:, :3]
+        self.get_logger().info("PCD points: %d" % points.shape[0])
         self.points_max = np.max(points, axis=0)
         self.points_min = np.min(points, axis=0)           
         self.points_min[-1] = self.ground_h
@@ -105,15 +106,10 @@ class Tomography(Node):
         The time of the first warm-up run is excluded to reduce timing fluctuation and exclude the overhead in initial invocations.
         See https://docs.cupy.dev/en/stable/user_guide/performance.html for more details
         """
-        for i in range(n_repeat + 1):
-            t_start = time.time()
-            layers_t, trav_grad_x, trav_grad_y, layers_g, layers_c, slice_heights, t_gpu = self.tomogram.point2map(points)
 
-            if i > 0:
-                t_map += t_gpu['t_map']
-                t_trav += t_gpu['t_trav']
-                t_simp += t_gpu['t_simp']
-                t_all += (time.time() - t_start) * 1e3
+        t_start = time.time()
+        layers_t, trav_grad_x, trav_grad_y, layers_g, layers_c, slice_heights, t_gpu = self.tomogram.point2map(points)
+
 
         self.get_logger().info("Num slices simp: %d" % layers_g.shape[0])
         self.get_logger().info("Num repeats (for benchmarking only): %d" % n_repeat)
@@ -299,10 +295,16 @@ def main(args=None):
     
     parser = argparse.ArgumentParser()
     parser.add_argument('--scene', type=str, default='Map', help='Name of the scene. Available: [\'Map\']')
+    parser.add_argument('--pcd', type=str, default=None, help='PCD file name under rsc/pcd/. Overrides scene config if set.')
     ros_args, _ = parser.parse_known_args()
 
     cfg = Config()
     scene_cfg = getattr(__import__('config'), 'Scene' + ros_args.scene)()
+
+    if ros_args.pcd is not None:
+        if not hasattr(scene_cfg, 'pcd'):
+            scene_cfg.pcd = ScenePCD()
+        scene_cfg.pcd.file_name = ros_args.pcd
 
     mapping_node = Tomography(cfg, scene_cfg)
 
