@@ -71,7 +71,6 @@ The following thresholds must stay in sync between the tomography export and
 
 ```python
 SPARSE_ASTAR_COST_THRESHOLD = 35.0
-SPARSE_ROBOT_HEIGHT_MIN     = 0.6
 SPARSE_GATEWAY_COST_DELTA   = 8.0
 SPARSE_GATEWAY_HEIGHT_DELTA = 0.1
 ```

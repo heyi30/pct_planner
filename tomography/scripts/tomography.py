@@ -29,7 +29,6 @@ rsg_root = os.path.dirname(os.path.abspath(__file__)) + '/../..'
 # Sparse map parameters. These must stay in sync with the values used by
 # SparseTomogramPlanner / SparseAstar.
 SPARSE_ASTAR_COST_THRESHOLD = 35.0
-SPARSE_ROBOT_HEIGHT_MIN = 0.6
 SPARSE_GATEWAY_COST_DELTA = 8.0
 SPARSE_GATEWAY_HEIGHT_DELTA = 0.1
 
@@ -161,17 +160,12 @@ class Tomography(Node):
 
         valid_height = np.isfinite(layers_g)
         valid_cost = np.isfinite(layers_t)
-        clearance_ok = (
-            np.isfinite(layers_c)
-            & ((layers_c - layers_g) >= SPARSE_ROBOT_HEIGHT_MIN)
-        )
         traversable = layers_t <= SPARSE_ASTAR_COST_THRESHOLD
         gateway_keep = gateway != 0
 
         sparse_mask = (
             valid_height
             & valid_cost
-            & clearance_ok
             & traversable
         ) | gateway_keep
 

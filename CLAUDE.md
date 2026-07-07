@@ -99,12 +99,12 @@ There is **no** `"data"` field. `indices` is the single source of planning nodes
 - Thresholds in `tomography/scripts/tomography.py` must match
   `planner/scripts/sparse_planner_wrapper.py`:
   - `SPARSE_ASTAR_COST_THRESHOLD = 35.0`
-  - `SPARSE_ROBOT_HEIGHT_MIN = 0.6`
   - `SPARSE_GATEWAY_COST_DELTA = 8.0`
   - `SPARSE_GATEWAY_HEIGHT_DELTA = 0.1`
-- The sparse export must not perform secondary dilation or downsampling.
-- Core ROS planning scripts (`plan.py`, `plan_direct.py`, `plan_systemt.py`) load
-  only `scene_map_sparse.pickle` and use `SparseTomogramPlanner`.
+- The sparse export does not perform secondary dilation or downsampling.
+- The `robot_height_min` / ceiling-clearance check has been removed from the
+  sparse mask at user request; nodes are filtered only by finite ground height,
+  finite cost, and `trav <= SPARSE_ASTAR_COST_THRESHOLD` (plus forced gateways).
 - No `OfflineElePlanner.init_map`, `DenseElevationMap`, `GPMPOptimizer`, or
   `GenerateTrajectory` calls in the core ROS flow.
 - Paths returned are raw Sparse A* polylines; no trajectory optimization is
