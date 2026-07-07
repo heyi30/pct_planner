@@ -26,6 +26,7 @@ include_directories(
 add_subdirectory(src/common)
 add_subdirectory(3rdparty/pybind11)
 add_subdirectory(src/a_star)
+add_subdirectory(src/sparse_a_star)
 add_subdirectory(src/trajectory_optimization)
 add_subdirectory(src/map_manager)
 add_subdirectory(src/ele_planner)

@@ -5,11 +5,10 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Path
-from std_msgs.msg import ByteMultiArray
 from geometry_msgs.msg import Point
 
 from utils import *
-from planner_wrapper import TomogramPlanner
+from sparse_planner_wrapper import SparseTomogramPlanner
 
 sys.path.append('../')
 from config import Config
@@ -38,17 +37,14 @@ class PCTPlannerNode(Node):
         super().__init__('pct_planner')
 
         self.cfg = Config()
-        self.planner = TomogramPlanner(self.cfg)
-        self.tomogram_received = False
+        self.planner = SparseTomogramPlanner(self.cfg)
+        self.planner.loadTomogram('scene_map_sparse')
+        self.tomogram_received = True
+
         self.start_pos = None
         self.end_pos = None
 
         self.path_pub = self.create_publisher(Path, "/pct_path", 10)
-        self.tomogram_sub = self.create_subscription(
-            ByteMultiArray,
-            "/tomogram_data",
-            self.tomogram_callback,
-            10)
         self.start_pos_sub = self.create_subscription(
             Point,
             "/start_pos",
@@ -59,44 +55,39 @@ class PCTPlannerNode(Node):
             "/end_pos",
             self.end_pos_callback,
             10)
-        self.get_logger().info("Waiting for tomogram data on /tomogram_data topic...")
+        self.get_logger().info("Sparse tomogram loaded from scene_map_sparse.pickle.")
         self.get_logger().info("Waiting for start position on /start_pos topic...")
         self.get_logger().info("Waiting for end position on /end_pos topic...")
 
     def start_pos_callback(self, msg):
         self.start_pos = np.array([msg.x, msg.y, msg.z], dtype=np.float32)
         self.get_logger().info(f"Received start position: {self.start_pos}")
+        self.try_plan()
 
     def end_pos_callback(self, msg):
         self.end_pos = np.array([msg.x, msg.y, msg.z], dtype=np.float32)
         self.get_logger().info(f"Received end position: {self.end_pos}")
+        self.try_plan()
 
-    def tomogram_callback(self, msg):
-        if self.tomogram_received and self.start_pos is not None and self.end_pos is not None:
-            self.get_logger().info("Tomogram, start and end positions already received. Skipping planning.")
+    def try_plan(self):
+        if not self.tomogram_received:
+            self.get_logger().info("Tomogram not ready yet.")
             return
 
-        if not self.tomogram_received:
-            self.get_logger().info("Received tomogram data. Initializing planner...")
-            self.planner.update_tomogram_from_msg(msg)
-            self.tomogram_received = True
-            self.get_logger().info("Planner initialized.")
-        
         if self.start_pos is None:
             self.get_logger().info("Waiting for start position...")
             return
-        
+
         if self.end_pos is None:
             self.get_logger().info("Waiting for end position...")
             return
 
-        self.get_logger().info("All data received. Planning trajectory...")
+        self.get_logger().info("All data received. Planning sparse A* path...")
 
-        # Use the received start_pos and end_pos
         start_pos_np = self.start_pos
         end_pos_np = self.end_pos
 
-        traj_3d = self.planner.plan(start_pos_np[:2], end_pos_np[:2], start_pos_np[2] + 0.5, end_pos_np[2] + 0.5)
+        traj_3d = self.planner.plan(start_pos_np[:2], end_pos_np[:2], start_pos_np[2], end_pos_np[2])
         if traj_3d is not None:
             path_msg = traj2ros(traj_3d)
             self.path_pub.publish(path_msg)
@@ -104,7 +95,6 @@ class PCTPlannerNode(Node):
             self.get_logger().info("Trajectory saved to trajectory.pcd")
             self.get_logger().info("Trajectory published to /pct_path")
             # Reset for next planning cycle
-            self.tomogram_received = False
             self.start_pos = None
             self.end_pos = None
         else:
@@ -113,11 +103,6 @@ class PCTPlannerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = PCTPlannerNode()
-    # We don't need to spin the node if it's just publishing once.
-    # rclpy.spin(node) 
-    # node.destroy_node()
-    # rclpy.shutdown()
-    # But if we want to keep it alive to check the published path, we can spin it.
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

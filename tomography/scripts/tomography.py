@@ -9,12 +9,11 @@ import cupy as cp
 import gc
 import subprocess
 import argparse
-from array import array
 
 import open3d as o3d
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import Header, ByteMultiArray
+from std_msgs.msg import Header
 from sensor_msgs.msg import PointCloud2
 import sensor_msgs_py.point_cloud2 as pc2
 
@@ -26,6 +25,13 @@ from config import Config
 from config.scene import ScenePCD
 
 rsg_root = os.path.dirname(os.path.abspath(__file__)) + '/../..'
+
+# Sparse map parameters. These must stay in sync with the values used by
+# SparseTomogramPlanner / SparseAstar.
+SPARSE_ASTAR_COST_THRESHOLD = 35.0
+SPARSE_ROBOT_HEIGHT_MIN = 0.6
+SPARSE_GATEWAY_COST_DELTA = 8.0
+SPARSE_GATEWAY_HEIGHT_DELTA = 0.1
 
 
 class Tomography(Node):
@@ -45,7 +51,6 @@ class Tomography(Node):
 
         tomogram_topic = cfg.ros.tomogram_topic
         self.tomogram_pub = self.create_publisher(PointCloud2, tomogram_topic, 10)
-        self.tomogram_data_pub = self.create_publisher(ByteMultiArray, '/tomogram_data', 10)
 
         self.load_and_process_pcd()
 
@@ -71,7 +76,7 @@ class Tomography(Node):
 
         self.get_logger().info("PCD points: %d" % points.shape[0])
         self.points_max = np.max(points, axis=0)
-        self.points_min = np.min(points, axis=0)           
+        self.points_min = np.min(points, axis=0)
         self.points_min[-1] = self.ground_h
         self.map_dim_x = int(np.ceil((self.points_max[0] - self.points_min[0]) / self.resolution)) + 4
         self.map_dim_y = int(np.ceil((self.points_max[1] - self.points_min[1]) / self.resolution)) + 4
@@ -92,106 +97,14 @@ class Tomography(Node):
         self.is_initialized = True
         self.get_logger().info("Tomography initialized and processed first point cloud.")
 
-        
-    def process(self, points):        
+    def process(self, points):
         t_map = 0.0
         t_trav = 0.0
         t_simp = 0.0
         t_all = 0.0
         n_repeat = 10
 
-        """ 
-        GPU time benchmark, where CUDA events are synchronized for correct time measurement.
-        The function is repeatedly run for n_repeat times to calculate the average processing time of each modules.
-        The time of the first warm-up run is excluded to reduce timing fluctuation and exclude the overhead in initial invocations.
-        See https://docs.cupy.dev/en/stable/user_guide/performance.html for more details
         """
-
-        t_start = time.time()
-        layers_t, trav_grad_x, trav_grad_y, layers_g, layers_c, slice_heights, t_gpu = self.tomogram.point2map(points)
-
-
-        self.get_logger().info("Num slices simp: %d" % layers_g.shape[0])
-        self.get_logger().info("Num repeats (for benchmarking only): %d" % n_repeat)
-        self.get_logger().info(" -- avg t_map  (ms): %f" % (t_map / n_repeat))
-        self.get_logger().info(" -- avg t_trav (ms): %f" % (t_trav / n_repeat))
-        self.get_logger().info(" -- avg t_simp (ms): %f" % (t_simp / n_repeat))
-        self.get_logger().info(" -- avg t_all  (ms): %f" % (t_all / n_repeat))
-
-        self.n_slice = layers_g.shape[0]
-
-        map_file = "scene_map"
-        tomogram_data = np.stack((layers_t, trav_grad_x, trav_grad_y, layers_g, layers_c))
-        
-        data_dict = self.exportTomogram(tomogram_data, map_file, slice_heights)
-        self.publish_tomogram_data(data_dict)
-        self.publishTomogram(layers_g, layers_t)
-
-    def exportTomogram(self, tomogram, map_file, slice_heights):        
-        data_dict = {
-            'data': tomogram.astype(np.float16),
-            'resolution': self.resolution,
-            'center': self.center,
-            'slice_h0': self.slice_h0,
-            'slice_dh': self.slice_dh,
-            'slice_heights': slice_heights.astype(np.float16),
-        }
-        file_name = map_file + '.pickle'
-        with open(self.export_dir + file_name, 'wb') as handle:
-            pickle.dump(data_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
-
-        self.get_logger().info("Tomogram exported: %s" % file_name)
-        return data_dict
-
-    def publish_tomogram_data(self, data_dict):
-        pickled_data = pickle.dumps(data_dict)
-        msg = ByteMultiArray()
-        msg.data = [bytes([i]) for i in pickled_data]
-        self.tomogram_data_pub.publish(msg)
-        self.get_logger().info("Tomogram data published to /tomogram_data")
-
-    def publishTomogram(self, layers_g, layers_t):
-        header = Header()
-        header.stamp = self.get_clock().now().to_msg()
-        header.frame_id = self.map_frame
-
-        n_slice = layers_g.shape[0]
-        vis_g = layers_g.copy()
-        vis_t = layers_t.copy() 
-        layer_points = self.VISPROTO_P.copy()
-        layer_points[:, :2] += self.center
-
-        global_points = None
-        for i in range(n_slice - 1):
-            mask_h = (vis_g[i + 1] - vis_g[i]) < self.slice_dh
-            vis_g[i, mask_h] = np.nan
-            vis_t[i + 1, mask_h] = np.minimum(vis_t[i, mask_h], vis_t[i + 1, mask_h])
-            layer_points[:, 2] = vis_g[i, self.VISPROTO_I[:, 0], self.VISPROTO_I[:, 1]]
-            layer_points[:, 3] = vis_t[i, self.VISPROTO_I[:, 0], self.VISPROTO_I[:, 1]]
-            valid_points = layer_points[~np.isnan(layer_points).any(axis=-1)]
-            if global_points is None:
-                global_points = valid_points
-            else:
-                global_points = np.concatenate((global_points, valid_points), axis=0)
-
-        layer_points[:, 2] = vis_g[-1, self.VISPROTO_I[:, 0], self.VISPROTO_I[:, 1]]
-        layer_points[:, 3] = vis_t[-1, self.VISPROTO_I[:, 0], self.VISPROTO_I[:, 1]]
-        valid_points = layer_points[~np.isnan(layer_points).any(axis=-1)]
-        global_points = np.concatenate((global_points, valid_points), axis=0)
-        
-        points_msg = pc2.create_cloud(header, POINT_FIELDS_XYZI, global_points)
-        self.tomogram_pub.publish(points_msg)
-        self.get_logger().info("Tomogram visualization published to /tomogram")
-
-        
-    def process(self, points):        
-        t_map = 0.0
-        t_trav = 0.0
-        t_simp = 0.0
-        t_all = 0.0
-        n_repeat = 10
-
-        """ 
         GPU time benchmark, where CUDA events are synchronized for correct time measurement.
         The function is repeatedly run for n_repeat times to calculate the average processing time of each modules.
         The time of the first warm-up run is excluded to reduce timing fluctuation and exclude the overhead in initial invocations.
@@ -216,35 +129,88 @@ class Tomography(Node):
 
         self.n_slice = layers_g.shape[0]
 
-        map_file = "scene_map"
-        tomogram_data = np.stack((layers_t, trav_grad_x, trav_grad_y, layers_g, layers_c))
-        
-        data_dict = self.exportTomogram(tomogram_data, map_file, slice_heights)
-        self.publish_tomogram_data(data_dict)
         self.publishTomogram(layers_g, layers_t)
+        self.exportSparseTomogram(layers_t, layers_g, layers_c, slice_heights)
 
-    def exportTomogram(self, tomogram, map_file, slice_heights):        
+    @staticmethod
+    def _compute_gateway(trav, elev_g):
+        """Gateway logic moved from planner_wrapper.py to the sparse export stage."""
+        diff_t = trav[1:] - trav[:-1]
+        diff_g = np.abs(elev_g[1:] - elev_g[:-1])
+
+        gateway_up = np.zeros_like(trav, dtype=bool)
+        mask_t = diff_t < -SPARSE_GATEWAY_COST_DELTA
+        mask_g = (diff_g < SPARSE_GATEWAY_HEIGHT_DELTA) & np.isfinite(elev_g[1:])
+        gateway_up[:-1] = mask_t & mask_g
+
+        gateway_dn = np.zeros_like(trav, dtype=bool)
+        mask_t = diff_t > SPARSE_GATEWAY_COST_DELTA
+        mask_g = (diff_g < SPARSE_GATEWAY_HEIGHT_DELTA) & np.isfinite(elev_g[:-1])
+        gateway_dn[1:] = mask_t & mask_g
+
+        gateway = np.zeros_like(trav, dtype=np.int32)
+        gateway[gateway_up] = 2
+        gateway[gateway_dn] = -2
+        return gateway
+
+    def exportSparseTomogram(self, layers_t, layers_g, layers_c, slice_heights):
+        """Export the sparse tomogram used by SparseTomogramPlanner / SparseAstar."""
+        t0 = time.time()
+
+        gateway = self._compute_gateway(layers_t, layers_g)
+
+        valid_height = np.isfinite(layers_g)
+        valid_cost = np.isfinite(layers_t)
+        clearance_ok = (
+            np.isfinite(layers_c)
+            & ((layers_c - layers_g) >= SPARSE_ROBOT_HEIGHT_MIN)
+        )
+        traversable = layers_t <= SPARSE_ASTAR_COST_THRESHOLD
+        gateway_keep = gateway != 0
+
+        sparse_mask = (
+            valid_height
+            & valid_cost
+            & clearance_ok
+            & traversable
+        ) | gateway_keep
+
+        coords = np.argwhere(sparse_mask)
+        # tomogram arrays are indexed [layer, x, y]; sparse format uses [layer, row=y, col=x]
+        indices = np.stack([coords[:, 0], coords[:, 2], coords[:, 1]], axis=1)
+        indices = indices.astype(np.int32)
+
         data_dict = {
-            'data': tomogram.astype(np.float16),
-            'resolution': self.resolution,
-            'center': self.center,
-            'slice_h0': self.slice_h0,
-            'slice_dh': self.slice_dh,
-            'slice_heights': slice_heights.astype(np.float16),
+            'format': 'tomogram_sparse_v1',
+            'shape': [int(self.n_slice), int(self.map_dim_y), int(self.map_dim_x)],
+            'resolution': float(self.resolution),
+            'center': self.center.astype(np.float64),
+            'slice_h0': float(self.slice_h0),
+            'slice_dh': float(self.slice_dh),
+            'slice_heights': slice_heights.astype(np.float32),
+            'indices': indices,
+            'trav': layers_t[sparse_mask].astype(np.float32),
+            'elev_g': layers_g[sparse_mask].astype(np.float32),
+            'elev_c': layers_c[sparse_mask].astype(np.float32),
+            'gateway': gateway[sparse_mask].astype(np.int32),
         }
-        file_name = map_file + '.pickle'
-        with open(self.export_dir + file_name, 'wb') as handle:
+
+        file_name = 'scene_map_sparse.pickle'
+        file_path = self.export_dir + file_name
+        with open(file_path, 'wb') as handle:
             pickle.dump(data_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-        self.get_logger().info("Tomogram exported: %s" % file_name)
-        return data_dict
+        dense_cells = int(self.n_slice) * int(self.map_dim_y) * int(self.map_dim_x)
+        sparse_nodes = int(indices.shape[0])
+        sparse_ratio = sparse_nodes / dense_cells if dense_cells > 0 else 0.0
+        elapsed_ms = (time.time() - t0) * 1e3
 
-    def publish_tomogram_data(self, data_dict):
-        pickled_data = pickle.dumps(data_dict)
-        msg = ByteMultiArray()
-        msg.data = [bytes([i]) for i in pickled_data]
-        self.tomogram_data_pub.publish(msg)
-        self.get_logger().info("Tomogram data published to /tomogram_data")
+        self.get_logger().info("Sparse tomogram exported: %s" % file_name)
+        self.get_logger().info("  dense_cells = %d" % dense_cells)
+        self.get_logger().info("  sparse_nodes = %d" % sparse_nodes)
+        self.get_logger().info("  sparse_ratio = %.4f" % sparse_ratio)
+        self.get_logger().info("  file_size = %.2f MB" % (os.path.getsize(file_path) / (1024.0 * 1024.0)))
+        self.get_logger().info("  export_time = %.2f ms" % elapsed_ms)
 
     def publishTomogram(self, layers_g, layers_t):
         header = Header()
@@ -253,7 +219,7 @@ class Tomography(Node):
 
         n_slice = layers_g.shape[0]
         vis_g = layers_g.copy()
-        vis_t = layers_t.copy() 
+        vis_t = layers_t.copy()
         layer_points = self.VISPROTO_P.copy()
         layer_points[:, :2] += self.center
 
@@ -274,7 +240,7 @@ class Tomography(Node):
         layer_points[:, 3] = vis_t[-1, self.VISPROTO_I[:, 0], self.VISPROTO_I[:, 1]]
         valid_points = layer_points[~np.isnan(layer_points).any(axis=-1)]
         global_points = np.concatenate((global_points, valid_points), axis=0)
-        
+
         points_msg = pc2.create_cloud(header, POINT_FIELDS_XYZI, global_points)
         self.tomogram_pub.publish(points_msg)
         self.get_logger().info("Tomogram visualization published to /tomogram")
@@ -292,7 +258,7 @@ def main(args=None):
     print(f"[INFO] GPU memory usage: {cp.get_default_memory_pool().used_bytes()/1024**3:.2f} GB used")
 
     rclpy.init(args=args)
-    
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--scene', type=str, default='Map', help='Name of the scene. Available: [\'Map\']')
     parser.add_argument('--pcd', type=str, default=None, help='PCD file name under rsc/pcd/. Overrides scene config if set.')

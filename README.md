@@ -18,80 +18,140 @@ cd planner/
 ./build.sh
 ```
 
-### Tomogram Construction
+The build produces the C++ pybind modules in `planner/lib/`, including the
+Sparse A* module:
 
-- In **tomography/scripts/**, run **tomography.py** :
+- `sparse_a_star.cpython-310-x86_64-linux-gnu.so`
+- `libsparse_a_star_search.so`
+
+Before running any planner script, set up the library and Python paths:
+
+```bash
+export LD_LIBRARY_PATH=/home/nuc/numa/PctPlanner/planner/lib/3rdparty/gtsam-4.1.1/install/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/home/nuc/numa/PctPlanner/planner/lib:$LD_LIBRARY_PATH
+export PYTHONPATH=/home/nuc/numa/PctPlanner/planner/lib:$PYTHONPATH
+```
+
+## Tomogram Construction
+
+In **tomography/scripts/**, run **tomography.py**:
 
 ```bash
 cd tomography/scripts/
 python3 tomography.py
 ```
 
-- The generated tomogram is visualized as ROS PointCloud2 message in RViz and saved in **rsc/tomogram/**.
+- The generated **sparse** tomogram is saved as
+  `rsc/tomogram/scene_map_sparse.pickle` in `tomogram_sparse_v1` format.
+- The tomogram is also visualized as a ROS `PointCloud2` message in RViz on
+  `/tomogram`.
+- The legacy dense `scene_map.pickle` is no longer produced.
 
-### Trajectory Generation
+### Sparse map parameters
 
-- In **planner/scripts/**, run **plan.py** with the **--scene** argument:
+The following thresholds must stay in sync between the tomography export and
+`SparseTomogramPlanner` / `SparseAstar`:
+
+```python
+SPARSE_ASTAR_COST_THRESHOLD = 35.0
+SPARSE_ROBOT_HEIGHT_MIN     = 0.6
+SPARSE_GATEWAY_COST_DELTA   = 8.0
+SPARSE_GATEWAY_HEIGHT_DELTA = 0.1
+```
+
+## Trajectory Generation
+
+The planner now uses **only** the sparse tomogram and Sparse A*. There is no
+dense fallback, no `DenseElevationMap`, and no GPMP trajectory optimization.
+
+- In **planner/scripts/**, run **plan.py**:
 
 ```bash
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/YOUR/DIRECTORY/TO/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib
+export LD_LIBRARY_PATH=/home/nuc/numa/PctPlanner/planner/lib/3rdparty/gtsam-4.1.1/install/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/home/nuc/numa/PctPlanner/planner/lib:$LD_LIBRARY_PATH
+export PYTHONPATH=/home/nuc/numa/PctPlanner/planner/lib:$PYTHONPATH
 cd planner/scripts/
-export LD_LIBRARY_PATH=/home/unitree/navigation/PctPlanner/planner/lib/3rdparty/gtsam-4.1.1/install/lib:$LD_LIBRARY_PATH
 python3 plan.py
 ```
 
-- The generated trajectory is visualized as ROS Path message in RViz.
+`plan.py` loads `rsc/tomogram/scene_map_sparse.pickle` at startup, then waits
+for start/end positions on `/start_pos` and `/end_pos`. The raw Sparse A*
+polyline is published as a `nav_msgs/Path` on `/pct_path`.
 
-### System-based Trajectory Generation (`plan_systemt.py`)
+## System-based Trajectory Generation (`plan_systemt.py`)
 
-`plan_systemt.py` 使用系统位姿和里程计信息自动规划路径：
+`plan_systemt.py` uses system pose and odometry information to plan repeatedly:
 
-- 启动时，从 `rsc/tomogram/scene_map.pickle` 加载 tomogram 数据并初始化规划器。
-- 初始起点默认为 `(0, 0, 0)`，终点默认为 `(1, 6, 0)`。
-- 订阅 `/odom/ground_truth` (`nav_msgs/Odometry`)，每次收到最新位姿后，从**当前位姿**到终点重新规划路径。
-- 当当前位姿与终点的平面距离小于 2 m 时，不再重新规划，只按固定频率（默认 1 Hz）发布当前路径到 `/pct_path_system`。
+- 启动时，从 `rsc/tomogram/scene_map_sparse.pickle` 加载稀疏 tomogram 数据并初始化
+  `SparseTomogramPlanner`。
+- 默认起点为楼梯终点，默认终点为 lobby（已在代码中通过 `M_loc2pct` 转换到 tomogram
+  坐标系）。
+- 订阅 `/local_pose` (`geometry_msgs/PoseStamped`)，每次收到最新位姿后，从**当前位姿**
+  到终点重新规划 Sparse A* 路径。
+- 当当前位姿与终点的平面距离小于 2 m 时，不再重新规划，只按固定频率（默认 1 Hz）发布当前路径到 `/pct_path2`。
 
 使用方法：
 
 ```bash
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/YOUR/DIRECTORY/TO/PCT_planner/planner/lib/3rdparty/gtsam-4.1.1/install/lib
+export LD_LIBRARY_PATH=/home/nuc/numa/PctPlanner/planner/lib/3rdparty/gtsam-4.1.1/install/lib:$LD_LIBRARY_PATH
+export LD_LIBRARY_PATH=/home/nuc/numa/PctPlanner/planner/lib:$LD_LIBRARY_PATH
+export PYTHONPATH=/home/nuc/numa/PctPlanner/planner/lib:$PYTHONPATH
 cd planner/scripts/
 python3 plan_systemt.py
 ```
 
 > 在运行前，请确保：
 >
-> - `rsc/tomogram/scene_map.pickle` 已存在（可通过 `tomography.py` 生成），
-> - 有节点在 `/odom/ground_truth` 上发布 `nav_msgs/Odometry` 消息，
-> - 在 RViz 中订阅 `/pct_path_system` 可查看路径。
+> - `rsc/tomogram/scene_map_sparse.pickle` 已存在（可通过 `tomography.py` 生成），
+> - 有节点在 `/local_pose` 上发布 `geometry_msgs/PoseStamped` 消息，
+> - 在 RViz 中订阅 `/pct_path2` 可查看路径。
 
-**修改初始起点和终点：**
+**修改起点和终点：**
 
-在 `planner/scripts/plan_systemt.py` 中找到 `__init__` 里的以下两行：
+在 `planner/scripts/plan_systemt.py` 的 `__init__` 中修改 `stair_end` 和 `lobby`
+两个数组（local 坐标系），它们会自动通过 `M_loc2pct` 变换到 tomogram 坐标系。
 
-```python
-self.start_pos = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # 初始起点
-self.goal_pos  = np.array([1.0, 6.0, 0.0], dtype=np.float32)  # 固定终点
+## Minimal run (`plan_direct.py`)
+
+1. Make sure `rsc/tomogram/scene_map_sparse.pickle` exists.
+2. Run the start/end publisher:
+
+   ```bash
+   cd rsc/
+   python3 publish_start_end_pos.py
+   ```
+
+3. Run the direct planner:
+
+   ```bash
+   export LD_LIBRARY_PATH=/home/nuc/numa/PctPlanner/planner/lib/3rdparty/gtsam-4.1.1/install/lib:$LD_LIBRARY_PATH
+   export LD_LIBRARY_PATH=/home/nuc/numa/PctPlanner/planner/lib:$LD_LIBRARY_PATH
+   export PYTHONPATH=/home/nuc/numa/PctPlanner/planner/lib:$PYTHONPATH
+   cd planner/scripts/
+   python3 plan_direct.py
+   ```
+
+The raw Sparse A* path is published as a `nav_msgs/Path` on `/pct_path2`.
+
+## Verification
+
+When planning succeeds, the console prints:
+
+```text
+raw_start_idx = [...]
+snapped_start_idx = [...]
+start_snap_distance = ...
+raw_goal_idx = [...]
+snapped_goal_idx = [...]
+goal_snap_distance = ...
+sparse_astar_init_ms = ...
+sparse_astar_search_ms = ...
+visited_nodes = ...
+path_nodes = ...
 ```
 
-- 如需修改**初始起点**，直接改 `self.start_pos` 中的三个数值，例如：
+In RViz the path should:
 
-  ```python
-  self.start_pos = np.array([x0, y0, z0], dtype=np.float32)
-  ```
-- 如需修改**终点**，直接改 `self.goal_pos` 中的三个数值，例如：
-
-  ```python
-  self.goal_pos = np.array([xg, yg, zg], dtype=np.float32)
-  ```
-
-注意：
-
-- `start_pos` 只是**初始起点**，之后会被 `/odom/ground_truth` 的最新位姿覆盖，用于重新规划；
-- `goal_pos` 是**固定目标点**，只有在你修改代码并重新运行 `plan_systemt.py` 后才会改变。
-
-# 极简化运行
-
-1.将planner/scripts/plan_direct.py文件中的tomogram_path = "/home/hanjiatong/PctPlanner/rsc/tomogram/scene_map.pickle"改为自己相对应的文件路径
-2.运行rsc文件夹下的publish_start_end_pos.py
-3.运行plan_direct.py
+- Start and end at the requested positions,
+- Use z values from the sparse node `elev_g`,
+- Be an unoptimized polyline.
