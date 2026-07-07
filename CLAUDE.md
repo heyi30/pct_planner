@@ -22,6 +22,8 @@ dense A*, `DenseElevationMap`, `OfflineElePlanner.init_map`, GPMP, or
 | `rsc/tomogram/scene_map_sparse.pickle` | Output sparse map |
 | `planner/build.sh` | Build C++ pybind modules |
 
+| `rsc/tomogram/publish_sparse_tomogram.py` | Optional PointCloud2 publisher for the sparse nodes |
+
 ## Build
 
 ```bash
@@ -54,6 +56,13 @@ cd /home/nuc/numa/PctPlanner/planner/scripts
 python3 plan_direct.py
 # In another terminal:
 # cd /home/nuc/numa/PctPlanner/rsc && python3 publish_start_end_pos.py
+```
+
+Visualize the sparse planning nodes:
+
+```bash
+cd /home/nuc/numa/PctPlanner/rsc/tomogram
+python3 publish_sparse_tomogram.py
 ```
 
 System pose-driven planning:

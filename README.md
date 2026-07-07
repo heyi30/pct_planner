@@ -43,9 +43,26 @@ python3 tomography.py
 
 - The generated **sparse** tomogram is saved as
   `rsc/tomogram/scene_map_sparse.pickle` in `tomogram_sparse_v1` format.
-- The tomogram is also visualized as a ROS `PointCloud2` message in RViz on
+- The tomogram surface is also visualized as a ROS `PointCloud2` message in RViz on
   `/tomogram`.
 - The legacy dense `scene_map.pickle` is no longer produced.
+
+### Visualizing the sparse map
+
+To visualize the actual sparse planning nodes (not just the surface point cloud),
+run:
+
+```bash
+cd rsc/tomogram/
+python3 publish_sparse_tomogram.py
+```
+
+In RViz:
+
+- Add a **PointCloud2** display.
+- Set the topic to `/sparse_tomogram`.
+- Set the Fixed Frame to `map`.
+- Color by the `trav` or `gateway` channel.
 
 ### Sparse map parameters
 
