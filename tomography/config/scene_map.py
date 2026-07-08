@@ -7,7 +7,7 @@ class SceneMap():
 
     map = SceneMap()
     map.resolution = 0.10
-    map.ground_h = -8.0
+    map.ground_h = -9.0
     map.slice_dh = 0.5
 
     trav = SceneTrav()
