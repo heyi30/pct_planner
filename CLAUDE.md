@@ -21,8 +21,8 @@ dense A*, `DenseElevationMap`, `OfflineElePlanner.init_map`, GPMP, or
 | `planner/scripts/plan_systemt.py` | ROS node: system pose-driven replanning on `/local_pose`, publishes `/pct_path2` |
 | `rsc/tomogram/scene_map_sparse.pickle` | Output sparse map |
 | `planner/build.sh` | Build C++ pybind modules |
-
 | `rsc/tomogram/publish_sparse_tomogram.py` | Optional PointCloud2 publisher for the sparse nodes |
+| `tomography/scripts/extract_largest_physical_component.py` | Offline dense-pickle physical-connectivity filter (keeps largest component) |
 
 ## Build
 
@@ -63,6 +63,14 @@ Visualize the sparse planning nodes:
 ```bash
 cd /home/nuc/numa/PctPlanner/rsc/tomogram
 python3 publish_sparse_tomogram.py
+```
+
+Filter a legacy dense tomogram to its largest physically connected component:
+
+```bash
+cd /home/nuc/numa/PctPlanner/tomography/scripts
+python3 extract_largest_physical_component.py --pickle scene_map.pickle
+# writes rsc/tomogram/scene_map_physical.pickle
 ```
 
 System pose-driven planning:
