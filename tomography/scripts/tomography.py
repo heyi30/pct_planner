@@ -152,6 +152,29 @@ class Tomography(Node):
         gateway[gateway_dn] = -2
         return gateway
 
+    @staticmethod
+    def _filter_largest_component(shape, indices, *arrays):
+        """Keep only the largest connected component of sparse nodes.
+
+        Uses 26-connectivity in 3-D (layer, row, col).  This removes small
+        disconnected islands that the planner cannot reach anyway.
+        """
+        from scipy import ndimage
+
+        mask = np.zeros(shape, dtype=bool)
+        mask[indices[:, 0], indices[:, 1], indices[:, 2]] = True
+        structure = ndimage.generate_binary_structure(3, 3)
+        labeled, n = ndimage.label(mask, structure=structure)
+        if n <= 1:
+            return (indices,) + arrays
+
+        component_sizes = np.bincount(labeled.ravel())[1:]
+        largest_label = int(component_sizes.argmax()) + 1
+        keep = labeled[indices[:, 0], indices[:, 1], indices[:, 2]] == largest_label
+        if not np.any(keep):
+            return (indices,) + arrays, n
+        return tuple(arr[keep] for arr in (indices,) + arrays), n
+
     def exportSparseTomogram(self, layers_t, layers_g, layers_c, slice_heights):
         """Export the sparse tomogram used by SparseTomogramPlanner / SparseAstar."""
         t0 = time.time()
@@ -174,6 +197,16 @@ class Tomography(Node):
         indices = np.stack([coords[:, 0], coords[:, 2], coords[:, 1]], axis=1)
         indices = indices.astype(np.int32)
 
+        (indices, trav_vals, elev_g_vals, elev_c_vals, gateway_vals), n_components = \
+            self._filter_largest_component(
+                [int(self.n_slice), int(self.map_dim_y), int(self.map_dim_x)],
+                indices,
+                layers_t[sparse_mask].astype(np.float32),
+                layers_g[sparse_mask].astype(np.float32),
+                layers_c[sparse_mask].astype(np.float32),
+                gateway[sparse_mask].astype(np.int32),
+            )
+
         data_dict = {
             'format': 'tomogram_sparse_v1',
             'shape': [int(self.n_slice), int(self.map_dim_y), int(self.map_dim_x)],
@@ -183,10 +216,10 @@ class Tomography(Node):
             'slice_dh': float(self.slice_dh),
             'slice_heights': slice_heights.astype(np.float32),
             'indices': indices,
-            'trav': layers_t[sparse_mask].astype(np.float32),
-            'elev_g': layers_g[sparse_mask].astype(np.float32),
-            'elev_c': layers_c[sparse_mask].astype(np.float32),
-            'gateway': gateway[sparse_mask].astype(np.int32),
+            'trav': trav_vals,
+            'elev_g': elev_g_vals,
+            'elev_c': elev_c_vals,
+            'gateway': gateway_vals,
         }
 
         file_name = 'scene_map_sparse.pickle'
@@ -202,6 +235,8 @@ class Tomography(Node):
         self.get_logger().info("Sparse tomogram exported: %s" % file_name)
         self.get_logger().info("  dense_cells = %d" % dense_cells)
         self.get_logger().info("  sparse_nodes = %d" % sparse_nodes)
+        self.get_logger().info("  components = %d (kept largest, removed %d nodes)" %
+                               (n_components, int(coords.shape[0]) - sparse_nodes))
         self.get_logger().info("  sparse_ratio = %.4f" % sparse_ratio)
         self.get_logger().info("  file_size = %.2f MB" % (os.path.getsize(file_path) / (1024.0 * 1024.0)))
         self.get_logger().info("  export_time = %.2f ms" % elapsed_ms)
