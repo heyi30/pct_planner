@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Extract the largest physically connected component from a sparse tomogram pickle.
+"""Extract the largest planner-reachable component from a sparse tomogram pickle.
 
-Physical connectivity means:
-- each height slice is labeled with 2-D connectivity (4/8-neighborhood)
-- adjacent slices are bridged when enough overlapping cells satisfy
-  |elev_g difference| <= max_vertical_step within connect_z_xy XY radius
-- the largest bridged component is kept
+Connectivity is defined exactly by the Sparse A* planner's edge rules:
 
-Input format: tomogram_sparse_v1 (the format produced by tomography.py).
-Output format: same sparse v1 pickle with only the largest component retained.
+1. A node is traversable if trav <= cost_threshold OR gateway != 0.
+2. Same-layer edges: 8-neighborhood, both nodes traversable,
+   |elev_g difference| <= step_max.
+3. Cross-layer edges: a gateway node (gateway > 0 up, < 0 down) connects to one
+   target node in the adjacent layer within a 3x3 window (including itself),
+   chosen by minimum Chebyshev distance then minimum cost, with the same
+   traversability and height-difference checks.
+
+The largest connected component under these rules is kept; everything else is
+removed from the sparse pickle.
 """
 
 import argparse
@@ -19,14 +23,15 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-from scipy import ndimage
+from scipy import sparse
+from scipy.sparse import csgraph
 
 
 RSG_ROOT = Path(__file__).resolve().parents[2]
 
 
 def log(message: str) -> None:
-    print(f"[extract-physical] {message}", flush=True)
+    print(f"[extract-planner] {message}", flush=True)
 
 
 def resolve_input(path: str) -> Path:
@@ -41,7 +46,7 @@ def resolve_input(path: str) -> Path:
 
 def resolve_output(path: str | None, input_path: Path) -> Path:
     if not path:
-        return input_path.with_name(f"{input_path.stem}_physical{input_path.suffix}")
+        return input_path.with_name(f"{input_path.stem}_planner{input_path.suffix}")
     p = Path(path).expanduser()
     if p.is_absolute():
         return p
@@ -64,159 +69,6 @@ def load_sparse_pickle(path: Path) -> dict:
     return data
 
 
-def build_structure_2d(connect_xy: int) -> np.ndarray:
-    if connect_xy == 4:
-        return np.array([[0, 1, 0], [1, 1, 1], [0, 1, 0]], dtype=bool)
-    if connect_xy == 8:
-        return np.ones((3, 3), dtype=bool)
-    raise ValueError("--connect-xy must be 4 or 8")
-
-
-def shifted_slices(dim_x: int, dim_y: int, dx: int, dy: int):
-    prev_x0, prev_x1 = max(0, -dx), min(dim_x, dim_x - dx)
-    prev_y0, prev_y1 = max(0, -dy), min(dim_y, dim_y - dy)
-    if prev_x0 >= prev_x1 or prev_y0 >= prev_y1:
-        return None
-    return (
-        (slice(prev_x0, prev_x1), slice(prev_y0, prev_y1)),
-        (slice(prev_x0 + dx, prev_x1 + dx), slice(prev_y0 + dy, prev_y1 + dy)),
-    )
-
-
-def uf_find(parent: np.ndarray, item: int) -> int:
-    root = item
-    while parent[root] != root:
-        root = int(parent[root])
-    while parent[item] != item:
-        nxt = int(parent[item])
-        parent[item] = root
-        item = nxt
-    return root
-
-
-def uf_union(parent: np.ndarray, rank: np.ndarray, a: int, b: int) -> None:
-    ra, rb = uf_find(parent, a), uf_find(parent, b)
-    if ra == rb:
-        return
-    if rank[ra] < rank[rb]:
-        parent[ra] = rb
-    elif rank[ra] > rank[rb]:
-        parent[rb] = ra
-    else:
-        parent[rb] = ra
-        rank[ra] += 1
-
-
-def extract_largest_physical_component(
-    traversable: np.ndarray,
-    layers_g: np.ndarray,
-    connect_xy: int,
-    connect_z_xy: int,
-    max_vertical_step: float,
-    min_bridge_cells: int,
-):
-    """Return a bool mask of the largest physically connected component."""
-    structure2d = build_structure_2d(connect_xy)
-    n_slices, dim_x, dim_y = traversable.shape
-
-    slice_offsets = []
-    slice_counts = []
-    node_sizes = []
-    edge_a = []
-    edge_b = []
-
-    prev_labels = None
-    prev_offset = 0
-    prev_count = 0
-    prev_g = None
-    current_offset = 0
-
-    shifts = [
-        (dx, dy)
-        for dx in range(-connect_z_xy, connect_z_xy + 1)
-        for dy in range(-connect_z_xy, connect_z_xy + 1)
-        if abs(dx) + abs(dy) <= connect_z_xy
-    ]
-
-    for s in range(n_slices):
-        labels, count = ndimage.label(traversable[s], structure=structure2d)
-        labels = labels.astype(np.int32, copy=False)
-        slice_offsets.append(current_offset)
-        slice_counts.append(int(count))
-
-        if count > 0:
-            node_sizes.extend(
-                np.bincount(labels.ravel(), minlength=count + 1)[1:].astype(np.int64).tolist()
-            )
-
-        if prev_labels is not None and prev_count > 0 and count > 0:
-            curr_g = layers_g[s].astype(np.float32, copy=False)
-            pair_base = count + 1
-            for dx, dy in shifts:
-                slices = shifted_slices(dim_x, dim_y, dx, dy)
-                if slices is None:
-                    continue
-                prev_slice, curr_slice = slices
-                prev_lab = prev_labels[prev_slice]
-                curr_lab = labels[curr_slice]
-                cand = (prev_lab > 0) & (curr_lab > 0)
-                if not np.any(cand):
-                    continue
-                dz = np.abs(prev_g[prev_slice] - curr_g[curr_slice])
-                cand &= dz <= max_vertical_step
-                if not np.any(cand):
-                    continue
-
-                encoded = (
-                    prev_lab[cand].astype(np.int64) * pair_base
-                    + curr_lab[cand].astype(np.int64)
-                )
-                if min_bridge_cells > 1:
-                    pairs, counts = np.unique(encoded, return_counts=True)
-                    pairs = pairs[counts >= min_bridge_cells]
-                else:
-                    pairs = np.unique(encoded)
-                if pairs.size == 0:
-                    continue
-
-                edge_a.extend((prev_offset + pairs // pair_base - 1).astype(np.int64).tolist())
-                edge_b.extend((current_offset + pairs % pair_base - 1).astype(np.int64).tolist())
-
-        prev_labels = labels
-        prev_offset = current_offset
-        prev_count = int(count)
-        prev_g = layers_g[s].astype(np.float32, copy=False)
-        current_offset += int(count)
-
-    if current_offset == 0:
-        raise RuntimeError("no traversable cells found")
-
-    parent = np.arange(current_offset, dtype=np.int32)
-    rank = np.zeros(current_offset, dtype=np.int8)
-    for a, b in zip(edge_a, edge_b):
-        uf_union(parent, rank, int(a), int(b))
-
-    roots = np.array([uf_find(parent, i) for i in range(current_offset)], dtype=np.int32)
-    sizes = np.bincount(roots, weights=np.asarray(node_sizes, dtype=np.int64), minlength=current_offset)
-    largest_root = int(np.argmax(sizes))
-    selected = roots == largest_root
-
-    keep = np.zeros(traversable.shape, dtype=bool)
-    for s in range(n_slices):
-        count = slice_counts[s]
-        if count == 0:
-            continue
-        offset = slice_offsets[s]
-        sel = selected[offset : offset + count]
-        if not np.any(sel):
-            continue
-        labels, _ = ndimage.label(traversable[s], structure=structure2d)
-        pos = labels > 0
-        keep[s][pos] = sel[labels[pos] - 1]
-
-    return keep, int(sizes[largest_root]), current_offset, len(edge_a)
-
-
 def write_pickle_atomic(data: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -233,17 +85,20 @@ def write_pickle_atomic(data: dict, path: Path) -> None:
         raise
 
 
+def overlap_slices(dim: int, d: int):
+    if d >= 0:
+        return slice(0, dim - d), slice(d, dim)
+    return slice(-d, dim), slice(0, dim + d)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Keep only the largest physically connected component of a sparse tomogram."
+        description="Keep only the largest component reachable by the Sparse A* planner."
     )
     parser.add_argument("--pickle", type=str, default="scene_map_sparse.pickle", help="input sparse tomogram pickle")
-    parser.add_argument("--output", type=str, default=None, help="output pickle; defaults to <input>_physical.pickle")
+    parser.add_argument("--output", type=str, default=None, help="output pickle; defaults to <input>_planner.pickle")
     parser.add_argument("--cost-threshold", type=float, default=35.0, help="traversable nodes have trav <= this")
-    parser.add_argument("--connect-xy", type=int, choices=(4, 8), default=8, help="same-layer connectivity")
-    parser.add_argument("--connect-z-xy", type=int, default=1, help="XY manhattan radius for adjacent-slice bridges")
-    parser.add_argument("--max-vertical-step", type=float, default=0.75, help="max |elev_g| difference for a bridge")
-    parser.add_argument("--min-bridge-cells", type=int, default=1, help="min overlapping cells to create a bridge")
+    parser.add_argument("--step-max", type=float, default=0.5, help="max |elev_g| difference for any edge")
     return parser.parse_args()
 
 
@@ -260,72 +115,145 @@ def main() -> int:
     indices = np.asarray(data_dict["indices"], dtype=np.int32)
     trav = np.asarray(data_dict["trav"], dtype=np.float32)
     elev_g = np.asarray(data_dict["elev_g"], dtype=np.float32)
+    elev_c = np.asarray(data_dict["elev_c"], dtype=np.float32)
     gateway = np.asarray(data_dict["gateway"], dtype=np.int32)
     shape = tuple(int(x) for x in data_dict["shape"])  # [S, Y, X]
+    n_slice, n_y, n_x = shape
+    n_nodes = indices.shape[0]
 
-    # Reconstruct dense arrays from the sparse representation.
-    traversable_mask = np.zeros(shape, dtype=bool)
-    layers_g = np.full(shape, np.nan, dtype=np.float32)
-    layers_t = np.full(shape, np.nan, dtype=np.float32)
-    layers_gateway = np.zeros(shape, dtype=np.int32)
-    traversable_mask[indices[:, 0], indices[:, 1], indices[:, 2]] = True
-    layers_g[indices[:, 0], indices[:, 1], indices[:, 2]] = elev_g
-    layers_t[indices[:, 0], indices[:, 1], indices[:, 2]] = trav
-    layers_gateway[indices[:, 0], indices[:, 1], indices[:, 2]] = gateway
+    log(f"nodes={n_nodes:,}, shape={shape}")
 
-    traversable = (
-        traversable_mask
-        & np.isfinite(layers_g)
-        & np.isfinite(layers_t)
-        & ((layers_t <= float(args.cost_threshold)) | (layers_gateway != 0))
-    )
-    total = int(np.count_nonzero(traversable))
-    log(f"traversable nodes={total:,}")
-    if total == 0:
-        raise RuntimeError("no traversable nodes")
+    # Dense helper arrays.
+    node_id = np.full(shape, -1, dtype=np.int32)
+    active = np.zeros(shape, dtype=bool)
+    height = np.full(shape, np.nan, dtype=np.float32)
+    cost = np.full(shape, np.nan, dtype=np.float32)
+    gateway_dense = np.zeros(shape, dtype=np.int32)
 
-    log(
-        f"extracting physical component: connect_xy={args.connect_xy}, "
-        f"connect_z_xy={args.connect_z_xy}, max_vertical_step={args.max_vertical_step:.3f}, "
-        f"min_bridge_cells={args.min_bridge_cells}"
-    )
-    keep, largest_count, n_nodes, n_edges = extract_largest_physical_component(
-        traversable,
-        layers_g,
-        args.connect_xy,
-        args.connect_z_xy,
-        float(args.max_vertical_step),
-        int(args.min_bridge_cells),
-    )
-    log(
-        f"largest component: nodes={largest_count:,}, ratio={largest_count / total:.4f}, "
-        f"graph_nodes={n_nodes:,}, graph_edges={n_edges:,}"
-    )
+    traversable = (trav <= float(args.cost_threshold)) | (gateway != 0)
+    node_id[indices[:, 0], indices[:, 1], indices[:, 2]] = np.arange(n_nodes, dtype=np.int32)
+    active[indices[:, 0], indices[:, 1], indices[:, 2]] = traversable
+    height[indices[:, 0], indices[:, 1], indices[:, 2]] = elev_g
+    cost[indices[:, 0], indices[:, 1], indices[:, 2]] = trav
+    gateway_dense[indices[:, 0], indices[:, 1], indices[:, 2]] = gateway
 
-    keep_idx = keep[indices[:, 0], indices[:, 1], indices[:, 2]]
-    removed = int(np.count_nonzero(~keep_idx))
+    active_count = int(np.count_nonzero(active))
+    log(f"active (traversable/gateway) nodes={active_count:,}")
+    if active_count == 0:
+        raise RuntimeError("no active nodes")
+
+    # Collect same-layer edges (undirected: use only 4 unique directions).
+    edge_rows = []
+    edge_cols = []
+    step_max = float(args.step_max)
+    same_layer_offsets = [(0, 1), (1, -1), (1, 0), (1, 1)]
+
+    for dr, dc in same_layer_offsets:
+        row_base, row_nb = overlap_slices(n_y, dr)
+        col_base, col_nb = overlap_slices(n_x, dc)
+        bid = node_id[:, row_base, col_base]
+        nid = node_id[:, row_nb, col_nb]
+        b_active = active[:, row_base, col_base]
+        n_active = active[:, row_nb, col_nb]
+        b_height = height[:, row_base, col_base]
+        n_height = height[:, row_nb, col_nb]
+
+        valid = (
+            (bid >= 0)
+            & (nid >= 0)
+            & b_active
+            & n_active
+            & (np.abs(b_height - n_height) <= step_max)
+        )
+        if np.any(valid):
+            edge_rows.append(bid[valid])
+            edge_cols.append(nid[valid])
+        log(f"same-layer offset ({dr:2d},{dc:2d}): edges={int(np.count_nonzero(valid)):,}")
+
+    # Cross-layer edges: one directed edge from each gateway node to its target.
+    gateway_idx = np.flatnonzero(gateway != 0)
+    log(f"gateway nodes={int(gateway_idx.size):,}")
+    cross_rows = []
+    cross_cols = []
+
+    for i in gateway_idx:
+        l = int(indices[i, 0])
+        r = int(indices[i, 1])
+        c = int(indices[i, 2])
+        tl = l + 1 if gateway[i] > 0 else l - 1
+        if tl < 0 or tl >= n_slice:
+            continue
+        h0 = float(elev_g[i])
+        best_id = -1
+        best_dist = 3  # max possible within 3x3 is 2
+        best_cost = float("inf")
+        for dr in (-1, 0, 1):
+            rr = r + dr
+            if rr < 0 or rr >= n_y:
+                continue
+            for dc in (-1, 0, 1):
+                cc = c + dc
+                if cc < 0 or cc >= n_x:
+                    continue
+                if not active[tl, rr, cc]:
+                    continue
+                if abs(float(height[tl, rr, cc]) - h0) > step_max:
+                    continue
+                dist = dr * dr + dc * dc
+                cid = int(node_id[tl, rr, cc])
+                co = float(cost[tl, rr, cc])
+                if dist < best_dist or (dist == best_dist and co < best_cost):
+                    best_id = cid
+                    best_dist = dist
+                    best_cost = co
+        if best_id >= 0:
+            cross_rows.append(i)
+            cross_cols.append(best_id)
+
+    if cross_rows:
+        edge_rows.append(np.asarray(cross_rows, dtype=np.int32))
+        edge_cols.append(np.asarray(cross_cols, dtype=np.int32))
+    log(f"cross-layer edges={len(cross_rows):,}")
+
+    # Build sparse graph and find connected components.
+    all_rows = np.concatenate(edge_rows).astype(np.int32)
+    all_cols = np.concatenate(edge_cols).astype(np.int32)
+    data = np.ones(all_rows.shape[0], dtype=bool)
+    graph = sparse.coo_matrix(
+        (data, (all_rows, all_cols)), shape=(n_nodes, n_nodes)
+    ).tocsr()
+
+    log(f"total edges={all_rows.shape[0]:,}; running connected_components ...")
+    n_components, labels = csgraph.connected_components(graph, directed=False, return_labels=True)
+    log(f"components={n_components:,}")
+
+    component_sizes = np.bincount(labels)
+    largest_label = int(np.argmax(component_sizes))
+    largest_size = int(component_sizes[largest_label])
+    log(f"largest component: nodes={largest_size:,}, ratio={largest_size / active_count:.4f}")
+
+    keep = labels == largest_label
+    removed = int(np.count_nonzero(~keep))
     log(f"removed nodes={removed:,}")
 
     out = dict(data_dict)
-    out["indices"] = indices[keep_idx]
-    out["trav"] = trav[keep_idx]
-    out["elev_g"] = elev_g[keep_idx]
-    out["elev_c"] = np.asarray(data_dict["elev_c"], dtype=np.float32)[keep_idx]
-    out["gateway"] = gateway[keep_idx]
+    out["indices"] = indices[keep]
+    out["trav"] = trav[keep]
+    out["elev_g"] = elev_g[keep]
+    out["elev_c"] = elev_c[keep]
+    out["gateway"] = gateway[keep]
     out["connectivity_source"] = {
         "input": str(input_path),
-        "method": "physical",
+        "method": "planner_reachability",
         "cost_threshold": float(args.cost_threshold),
-        "connect_xy": int(args.connect_xy),
-        "connect_z_xy": int(args.connect_z_xy),
-        "max_vertical_step": float(args.max_vertical_step),
-        "min_bridge_cells": int(args.min_bridge_cells),
-        "total_nodes": int(indices.shape[0]),
-        "total_traversable_nodes": total,
-        "largest_nodes": largest_count,
+        "step_max": float(args.step_max),
+        "total_nodes": n_nodes,
+        "active_nodes": active_count,
+        "largest_nodes": largest_size,
         "removed_nodes": removed,
-        "graph_nodes": n_nodes,
-        "graph_edges": n_edges,
+        "components": int(n_components),
+        "same_layer_edges": int(all_rows.shape[0] - len(cross_rows)),
+        "cross_layer_edges": len(cross_rows),
     }
 
     input_size = os.path.getsize(input_path)
