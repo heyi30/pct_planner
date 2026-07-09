@@ -16,6 +16,7 @@ dense A*, `DenseElevationMap`, `OfflineElePlanner.init_map`, GPMP, or
 | `tomography/scripts/tomography.py` | PCD → sparse tomogram export (`scene_map_sparse.pickle`) |
 | `planner/lib/src/sparse_a_star/` | C++ `SparseAstar` implementation and pybind interface |
 | `planner/scripts/sparse_planner_wrapper.py` | Python `SparseTomogramPlanner` |
+| `planner/scripts/Planner.py` | Offline CLI path planner on a sparse pickle |
 | `planner/scripts/plan.py` | ROS node: loads sparse map, waits for `/start_pos`/`/end_pos`, publishes `/pct_path` |
 | `planner/scripts/plan_direct.py` | ROS node: loads sparse map directly, publishes `/pct_path2` |
 | `planner/scripts/plan_systemt.py` | ROS node: system pose-driven replanning on `/local_pose`, publishes `/pct_path2` |
@@ -80,6 +81,17 @@ One-shot PCD → filtered sparse pickle:
 cd /home/nuc/numa/PctPlanner/tomography/scripts
 python3 pcd_to_filtered_sparse.py --pcd dshp.pcd
 # writes rsc/tomogram/scene_map_sparse_planner.pickle
+```
+
+Offline path planning on the filtered sparse map:
+
+```bash
+cd /home/nuc/numa/PctPlanner/planner/scripts
+python3 Planner.py \
+  --map scene_map_sparse_planner \
+  --start -100 -10 0 \
+  --goal -90 0 0 \
+  --output /tmp/path.npy
 ```
 
 System pose-driven planning:
