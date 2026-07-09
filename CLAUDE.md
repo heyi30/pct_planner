@@ -23,6 +23,7 @@ dense A*, `DenseElevationMap`, `OfflineElePlanner.init_map`, GPMP, or
 | `planner/build.sh` | Build C++ pybind modules |
 | `rsc/tomogram/publish_sparse_tomogram.py` | Optional PointCloud2 publisher for the sparse nodes |
 | `tomography/scripts/extract_largest_physical_component.py` | Offline sparse-pickle planner-reachability filter (keeps largest component) |
+| `tomography/scripts/pcd_to_filtered_sparse.py` | PCD → sparse pickle → largest planner-reachable component (orchestrates the two scripts above) |
 
 ## Build
 
@@ -70,6 +71,14 @@ Filter the sparse tomogram to its largest planner-reachable component:
 ```bash
 cd /home/nuc/numa/PctPlanner/tomography/scripts
 python3 extract_largest_physical_component.py --pickle scene_map_sparse.pickle
+# writes rsc/tomogram/scene_map_sparse_planner.pickle
+```
+
+One-shot PCD → filtered sparse pickle:
+
+```bash
+cd /home/nuc/numa/PctPlanner/tomography/scripts
+python3 pcd_to_filtered_sparse.py --pcd dshp.pcd
 # writes rsc/tomogram/scene_map_sparse_planner.pickle
 ```
 
