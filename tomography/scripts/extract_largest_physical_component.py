@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Extract the largest physically connected traversable region from a dense tomogram pickle.
+"""Extract the largest physically connected component from a sparse tomogram pickle.
 
-This is a simplified standalone script that implements only the "physical" connectivity
-mode: each height slice is labeled with 2-D connectivity, adjacent slices are bridged
-when enough overlapping cells have |elev_g difference| <= max_vertical_step, and only
-the largest bridged component is kept.
+Physical connectivity means:
+- each height slice is labeled with 2-D connectivity (4/8-neighborhood)
+- adjacent slices are bridged when enough overlapping cells satisfy
+  |elev_g difference| <= max_vertical_step within connect_z_xy XY radius
+- the largest bridged component is kept
+
+Input format: tomogram_sparse_v1 (the format produced by tomography.py).
+Output format: same sparse v1 pickle with only the largest component retained.
 """
 
 import argparse
@@ -44,16 +48,19 @@ def resolve_output(path: str | None, input_path: Path) -> Path:
     return (input_path.parent / p).resolve()
 
 
-def load_dense_pickle(path: Path) -> dict:
+def load_sparse_pickle(path: Path) -> dict:
     if not path.is_file():
         raise FileNotFoundError(f"pickle not found: {path}")
     with path.open("rb") as handle:
         data = pickle.load(handle)
-    if not isinstance(data, dict) or "data" not in data:
-        raise ValueError("expected dense tomogram dict with key 'data'")
-    arr = np.asarray(data["data"])
-    if arr.ndim != 4 or arr.shape[0] < 4:
-        raise ValueError(f"expected data shape (C,S,X,Y), got {arr.shape}")
+    if not isinstance(data, dict):
+        raise ValueError("expected dict")
+    if data.get("format") != "tomogram_sparse_v1":
+        raise ValueError(f"expected format 'tomogram_sparse_v1', got {data.get('format')!r}")
+    required = {"shape", "indices", "trav", "elev_g", "elev_c", "gateway"}
+    missing = required - set(data.keys())
+    if missing:
+        raise ValueError(f"sparse pickle missing keys: {missing}")
     return data
 
 
@@ -210,15 +217,6 @@ def extract_largest_physical_component(
     return keep, int(sizes[largest_root]), current_offset, len(edge_a)
 
 
-def apply_mask(data: np.ndarray, mask: np.ndarray, cost_barrier: float) -> None:
-    data[0, ~mask] = np.float16(cost_barrier)
-    data[1, ~mask] = np.float16(0.0)
-    data[2, ~mask] = np.float16(0.0)
-    data[3, ~mask] = np.float16(np.nan)
-    if data.shape[0] > 4:
-        data[4, ~mask] = np.float16(np.nan)
-
-
 def write_pickle_atomic(data: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -237,11 +235,11 @@ def write_pickle_atomic(data: dict, path: Path) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Keep only the largest physically connected component of a dense tomogram."
+        description="Keep only the largest physically connected component of a sparse tomogram."
     )
-    parser.add_argument("--pickle", type=str, default="scene_map.pickle", help="input dense tomogram pickle")
+    parser.add_argument("--pickle", type=str, default="scene_map_sparse.pickle", help="input sparse tomogram pickle")
     parser.add_argument("--output", type=str, default=None, help="output pickle; defaults to <input>_physical.pickle")
-    parser.add_argument("--cost-barrier", type=float, default=50.0, help="traversable cells have cost < this")
+    parser.add_argument("--cost-threshold", type=float, default=35.0, help="traversable nodes have trav <= this")
     parser.add_argument("--connect-xy", type=int, choices=(4, 8), default=8, help="same-layer connectivity")
     parser.add_argument("--connect-z-xy", type=int, default=1, help="XY manhattan radius for adjacent-slice bridges")
     parser.add_argument("--max-vertical-step", type=float, default=0.75, help="max |elev_g| difference for a bridge")
@@ -257,16 +255,34 @@ def main() -> int:
         raise ValueError(f"--output must be a file path, not a directory: {output_path}")
 
     log(f"loading {input_path}")
-    data_dict = load_dense_pickle(input_path)
-    data = np.asarray(data_dict["data"])
-    layers_t = data[0].astype(np.float32, copy=False)
-    layers_g = data[3].astype(np.float32, copy=False)
+    data_dict = load_sparse_pickle(input_path)
 
-    traversable = np.isfinite(layers_g) & np.isfinite(layers_t) & (layers_t < float(args.cost_barrier))
+    indices = np.asarray(data_dict["indices"], dtype=np.int32)
+    trav = np.asarray(data_dict["trav"], dtype=np.float32)
+    elev_g = np.asarray(data_dict["elev_g"], dtype=np.float32)
+    gateway = np.asarray(data_dict["gateway"], dtype=np.int32)
+    shape = tuple(int(x) for x in data_dict["shape"])  # [S, Y, X]
+
+    # Reconstruct dense arrays from the sparse representation.
+    traversable_mask = np.zeros(shape, dtype=bool)
+    layers_g = np.full(shape, np.nan, dtype=np.float32)
+    layers_t = np.full(shape, np.nan, dtype=np.float32)
+    layers_gateway = np.zeros(shape, dtype=np.int32)
+    traversable_mask[indices[:, 0], indices[:, 1], indices[:, 2]] = True
+    layers_g[indices[:, 0], indices[:, 1], indices[:, 2]] = elev_g
+    layers_t[indices[:, 0], indices[:, 1], indices[:, 2]] = trav
+    layers_gateway[indices[:, 0], indices[:, 1], indices[:, 2]] = gateway
+
+    traversable = (
+        traversable_mask
+        & np.isfinite(layers_g)
+        & np.isfinite(layers_t)
+        & ((layers_t <= float(args.cost_threshold)) | (layers_gateway != 0))
+    )
     total = int(np.count_nonzero(traversable))
-    log(f"traversable cells={total:,}")
+    log(f"traversable nodes={total:,}")
     if total == 0:
-        raise RuntimeError("no traversable cells")
+        raise RuntimeError("no traversable nodes")
 
     log(
         f"extracting physical component: connect_xy={args.connect_xy}, "
@@ -282,32 +298,40 @@ def main() -> int:
         int(args.min_bridge_cells),
     )
     log(
-        f"largest component: cells={largest_count:,}, ratio={largest_count / total:.4f}, "
+        f"largest component: nodes={largest_count:,}, ratio={largest_count / total:.4f}, "
         f"graph_nodes={n_nodes:,}, graph_edges={n_edges:,}"
     )
 
+    keep_idx = keep[indices[:, 0], indices[:, 1], indices[:, 2]]
+    removed = int(np.count_nonzero(~keep_idx))
+    log(f"removed nodes={removed:,}")
+
     out = dict(data_dict)
-    out_data = np.array(data, copy=True)
-    apply_mask(out_data, keep, args.cost_barrier)
-    out["data"] = out_data.astype(np.float16, copy=False)
+    out["indices"] = indices[keep_idx]
+    out["trav"] = trav[keep_idx]
+    out["elev_g"] = elev_g[keep_idx]
+    out["elev_c"] = np.asarray(data_dict["elev_c"], dtype=np.float32)[keep_idx]
+    out["gateway"] = gateway[keep_idx]
     out["connectivity_source"] = {
         "input": str(input_path),
         "method": "physical",
-        "cost_barrier": float(args.cost_barrier),
+        "cost_threshold": float(args.cost_threshold),
         "connect_xy": int(args.connect_xy),
         "connect_z_xy": int(args.connect_z_xy),
         "max_vertical_step": float(args.max_vertical_step),
         "min_bridge_cells": int(args.min_bridge_cells),
-        "total_traversable_cells": total,
-        "largest_cells": largest_count,
+        "total_nodes": int(indices.shape[0]),
+        "total_traversable_nodes": total,
+        "largest_nodes": largest_count,
+        "removed_nodes": removed,
         "graph_nodes": n_nodes,
         "graph_edges": n_edges,
     }
 
-    est = out["data"].nbytes
+    input_size = os.path.getsize(input_path)
     free = shutil.disk_usage(output_path.parent).free
-    log(f"output shape={out['data'].shape}, payload={est / 1024 ** 3:.2f} GiB")
-    if free < est * 1.15 + 512 * 1024 * 1024:
+    log(f"output nodes={int(out['indices'].shape[0]):,}")
+    if free < input_size * 1.2 + 512 * 1024 * 1024:
         raise RuntimeError(f"not enough free disk space on {output_path.parent}")
 
     log(f"writing {output_path}")
