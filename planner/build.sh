@@ -17,22 +17,10 @@ mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 cmake ../ -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5
 make -j6
-cp ./src/a_star/a_star*.so ../
 cp ./src/sparse_a_star/sparse_a_star*.so ../
-cp ./src/trajectory_optimization/traj_opt*.so ../
-cp ./src/ele_planner/ele_planner*.so ../
-cp ./src/map_manager/py_map_manager*.so ../
-cp ./src/a_star/liba_star_search.so ../
-cp ./src/sparse_a_star/libsparse_a_star_search.so ../
-cp ./src/trajectory_optimization/libgpmp_optimizer.so ../
-cp ./src/ele_planner/libele_planner_lib.so ../
-cp ./src/map_manager/libmap_manager.so ../
-cp ./src/common/smoothing/libcommon_smoothing.so ../
 cd ..
 
 # # optional
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${ROOT_DIR}/lib/3rdparty/gtsam-4.1.1/install/lib
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:${ROOT_DIR}/lib/build/src/common/smoothing
 export PYTHONPATH=$PYTHONPATH:${ROOT_DIR}/lib
 # pybind11-stubgen -o ./ a_star
 # pybind11-stubgen -o ./ traj_opt

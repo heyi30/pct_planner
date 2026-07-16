@@ -11,6 +11,10 @@ rsc/tomogram/*.bak
 planner/config/__pycache__/
 planner/scripts/__pycache__
 tomography/scripts/__pycache__
+tomography/config/__pycache__
+rsc/tomogram/__pycache__
+rsc/__pycache__
+rsc/traj/
 tests/__pycache__/
 tests/results/
 log
