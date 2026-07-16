@@ -24,7 +24,7 @@ from sensor_msgs.msg import PointCloud2
 import sensor_msgs_py.point_cloud2 as pc2
 
 rsg_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DEFAULT_SPARSE_PATH = os.path.join(rsg_root, 'rsc', 'tomogram', 'scene_map_sparse.pickle')
+DEFAULT_SPARSE_PATH = os.path.join(rsg_root, 'rsc', 'tomogram', 'scene_map_sparse_planner.pickle')
 
 POINT_FIELDS = [
     pc2.PointField(name='x', offset=0, datatype=pc2.PointField.FLOAT32, count=1),
