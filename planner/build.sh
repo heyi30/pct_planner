@@ -22,11 +22,4 @@ cd ..
 
 # # optional
 export PYTHONPATH=$PYTHONPATH:${ROOT_DIR}/lib
-# pybind11-stubgen -o ./ a_star
-# pybind11-stubgen -o ./ traj_opt
-# pybind11-stubgen -o ./ ele_planner
-# pybind11-stubgen -o ./ py_map_manager
-# cp ./a_star-stubs/__init__.pyi ./a_star.pyi
-# cp ./traj_opt-stubs/__init__.pyi ./traj_opt.pyi
-# cp ./ele_planner-stubs/__init__.pyi ./ele_planner.pyi
-# cp ./py_map_manager-stubs/__init__.pyi ./py_map_manager.pyi
+
