@@ -3,12 +3,19 @@
 
 Wraps SparseTomogramPlanner and exposes a small CLI:
     python3 Planner.py --start -100 -10 0 --goal -90 0 0
+    python3 Planner.py --json waypoints.json --start-node desk --goal-node outdoor
+
+With --json, start/goal poses are looked up by waypoint name from a JSON
+file of the form [{"name": ..., "pose": [x, y, z], ...}, ...].
 
 The default map is the filtered sparse pickle produced by
 pcd_to_filtered_sparse.py: `scene_map_sparse_planner.pickle`.
+The result is saved to `path.csv` next to this script unless --output
+is given.
 """
 
 import argparse
+import json
 import os
 import pickle
 import sys
@@ -67,6 +74,22 @@ class Planner(object):
         return self.planner.plan_from_indices(start_idx, goal_idx)
 
 
+def load_waypoint_pose(json_path, node_name):
+    """Return the [x, y, z] pose of a named waypoint from a JSON waypoint file."""
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+    for entry in data:
+        if entry.get('name') == node_name:
+            pose = entry.get('pose')
+            if isinstance(pose, list) and len(pose) == 3:
+                return pose
+            raise ValueError(f"waypoint {node_name!r} has no valid 'pose' [x, y, z]")
+    available = [entry.get('name') for entry in data]
+    raise KeyError(
+        f"waypoint {node_name!r} not found in {json_path}; available: {available}"
+    )
+
+
 def parse_xyz(arg):
     """Parse an argument list of three floats."""
     parts = [float(x) for x in arg]
@@ -109,16 +132,29 @@ def parse_args():
         help="sparse tomogram pickle name under rsc/tomogram/ (without .pickle)"
     )
     parser.add_argument(
-        '--start', type=float, nargs=3, required=True, metavar=('X', 'Y', 'Z'),
+        '--start', type=float, nargs=3, default=None, metavar=('X', 'Y', 'Z'),
         help="start position in world coordinates"
     )
     parser.add_argument(
-        '--goal', type=float, nargs=3, required=True, metavar=('X', 'Y', 'Z'),
+        '--goal', type=float, nargs=3, default=None, metavar=('X', 'Y', 'Z'),
         help="goal position in world coordinates"
     )
     parser.add_argument(
-        '--output', type=str, default=None,
-        help="optional output file (.npy, .pickle, .pcd, .csv, or text)"
+        '--json', type=str, default=None,
+        help="waypoint JSON file; poses are looked up by --start-node/--goal-node"
+    )
+    parser.add_argument(
+        '--start-node', type=str, default=None,
+        help="name of the start waypoint in --json"
+    )
+    parser.add_argument(
+        '--goal-node', type=str, default=None,
+        help="name of the goal waypoint in --json"
+    )
+    parser.add_argument(
+        '--output', type=str, default=os.path.join(SCRIPT_DIR, 'path.csv'),
+        help="output file (.npy, .pickle, .pcd, .csv, or text); "
+             "defaults to path.csv next to this script"
     )
     return parser.parse_args()
 
@@ -126,11 +162,24 @@ def parse_args():
 def main():
     args = parse_args()
 
+    if args.json or args.start_node or args.goal_node:
+        if not (args.json and args.start_node and args.goal_node):
+            print("ERROR: --json, --start-node and --goal-node must be used together")
+            return 1
+        start = load_waypoint_pose(args.json, args.start_node)
+        goal = load_waypoint_pose(args.json, args.goal_node)
+    elif args.start is not None and args.goal is not None:
+        start, goal = args.start, args.goal
+    else:
+        print("ERROR: provide either --start/--goal XYZ or "
+              "--json with --start-node/--goal-node")
+        return 1
+
     print(f"Loading map: {args.map}.pickle")
     planner = Planner(map_name=args.map)
 
-    print(f"Planning from {args.start} to {args.goal} ...")
-    path = planner.plan(args.start, args.goal)
+    print(f"Planning from {start} to {goal} ...")
+    path = planner.plan(start, goal)
 
     if path is None:
         print("Planning failed.")

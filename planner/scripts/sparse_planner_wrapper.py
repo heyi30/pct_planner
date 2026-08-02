@@ -18,6 +18,8 @@ SPARSE_MAX_SNAP_RADIUS = 80      # grid cells
 SPARSE_STEP_MAX = 0.5            # meters
 SPARSE_COST_WEIGHT = 0.2
 
+TRAJECTORY_Z_OFFSET = 0.3        # meters, z lift applied to the planned trajectory
+
 
 class SparseTomogramPlanner(object):
     def __init__(self, cfg):
@@ -191,7 +193,7 @@ class SparseTomogramPlanner(object):
             idx = self.sparse_index_map[(int(layer), int(row), int(col))]
             x = (col - self.offset[0]) * self.resolution + self.center[0]
             y = (row - self.offset[1]) * self.resolution + self.center[1]
-            z = self.elev_g[idx]
+            z = self.elev_g[idx] + TRAJECTORY_Z_OFFSET
             path_xyz[i] = [x, y, z]
 
         return path_xyz
