@@ -62,13 +62,36 @@ def resolve_output(path: str | None) -> Path:
     return (TOMOGRAM_DIR / p).resolve()
 
 
-def run_tomography(pcd_name: str, timeout: float = 600.0) -> None:
-    """Run tomography.py until the sparse pickle is exported, then terminate it."""
-    cmd = [
-        "bash",
-        "-c",
-        f"source /opt/ros/humble/setup.bash && python3 tomography.py --pcd {pcd_name}",
-    ]
+def run_tomography(
+    pcd_name: str,
+    timeout: float = 600.0,
+    tiled: bool = False,
+    gpu_memory_gb: float = 10.0,
+    tile_size: int | None = None,
+    temp_dir: str | None = None,
+) -> None:
+    """Run the selected generator until the sparse pickle is exported."""
+    if tiled:
+        cmd = [
+            sys.executable,
+            "tiled_tomography.py",
+            "--pcd",
+            pcd_name,
+            "--output",
+            str(SPARSE_PICKLE),
+            "--gpu-memory-gb",
+            str(gpu_memory_gb),
+        ]
+        if tile_size is not None:
+            cmd.extend(["--tile-size", str(tile_size)])
+        if temp_dir is not None:
+            cmd.extend(["--temp-dir", temp_dir])
+    else:
+        cmd = [
+            "bash",
+            "-c",
+            f"source /opt/ros/humble/setup.bash && python3 tomography.py --pcd {pcd_name}",
+        ]
     log(f"running: {' '.join(cmd)}  (cwd={TOMOGRAPHY_DIR})")
 
     proc = subprocess.Popen(
@@ -92,9 +115,12 @@ def run_tomography(pcd_name: str, timeout: float = 600.0) -> None:
             print(line, flush=True)
             if "Sparse tomogram exported:" in line:
                 exported = True
-                log("sparse pickle exported; terminating tomography node")
-                os.killpg(os.getpgid(proc.pid), signal.SIGINT)
-                break
+                if tiled:
+                    log("sparse pickle exported")
+                else:
+                    log("sparse pickle exported; terminating tomography node")
+                    os.killpg(os.getpgid(proc.pid), signal.SIGINT)
+                    break
             if time.time() - t0 > timeout:
                 raise TimeoutError("tomography.py did not export sparse pickle in time")
     finally:
@@ -136,6 +162,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cost-threshold", type=float, default=35.0, help="passed to the connectivity filter")
     parser.add_argument("--step-max", type=float, default=0.5, help="passed to the connectivity filter")
     parser.add_argument("--timeout", type=float, default=600.0, help="max seconds to wait for tomography export")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--tiled",
+        dest="tiled",
+        action="store_true",
+        help="use the exact memory-bounded tiled implementation (default)",
+    )
+    mode.add_argument(
+        "--legacy",
+        dest="tiled",
+        action="store_false",
+        help="use the original single-allocation tomography.py path",
+    )
+    parser.set_defaults(tiled=True)
+    parser.add_argument("--gpu-memory-gb", type=float, default=10.0, help="GPU memory budget for --tiled")
+    parser.add_argument("--tile-size", type=int, default=None, help="force square core tiles for equivalence testing")
+    parser.add_argument("--temp-dir", type=str, default=None, help="temporary memmap directory for --tiled")
     parser.add_argument("--remove-intermediate", action="store_true", help="remove scene_map_sparse.pickle after copying output")
     return parser.parse_args()
 
@@ -148,7 +191,14 @@ def main() -> int:
     log(f"input PCD file_name={pcd_name}")
     log(f"output pickle={output_path}")
 
-    run_tomography(pcd_name, timeout=args.timeout)
+    run_tomography(
+        pcd_name,
+        timeout=args.timeout,
+        tiled=args.tiled,
+        gpu_memory_gb=args.gpu_memory_gb,
+        tile_size=args.tile_size,
+        temp_dir=args.temp_dir,
+    )
     run_filter(args.cost_threshold, args.step_max)
 
     if output_path != FILTERED_PICKLE:

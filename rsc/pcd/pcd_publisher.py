@@ -18,7 +18,7 @@ class PCDPublisher(Node):
         timer_period = 10  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
-        pcd_file = os.path.join(rsg_root, 'rsc', 'pcd', 'ruifu.pcd')
+        pcd_file = os.path.join(rsg_root, 'rsc', 'pcd', 'chagee_downsampled.pcd')
         self.get_logger().info(f"Loading PCD file from: {pcd_file}")
         
         try:

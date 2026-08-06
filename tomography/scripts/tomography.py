@@ -242,9 +242,9 @@ class Tomography(Node):
 
 def main(args=None):
     # Launch rviz2
-    rclpy.logging.get_logger('tomography').info("Launching rviz2...")
-    rviz_config_path = rsg_root + '/rsc/rviz/pct_ros.rviz'
-    subprocess.Popen(['rviz2', '-d', rviz_config_path])
+    # rclpy.logging.get_logger('tomography').info("Launching rviz2...")
+    # rviz_config_path = rsg_root + '/rsc/rviz/pct_ros.rviz'
+    # subprocess.Popen(['rviz2', '-d', rviz_config_path])
 
     # Clean up GPU memory
     cp.get_default_memory_pool().free_all_blocks()
