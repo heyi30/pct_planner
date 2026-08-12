@@ -1,0 +1,87 @@
+{
+  "regions": [
+    {
+      "component_id": [
+        833,
+        1606
+      ],
+      "node_count": 527141,
+      "height_mean": -0.34702147457753196,
+      "height_min": -0.7444828152656555,
+      "height_max": 0.18526208400726318,
+      "height_range": 0.9297448992729187,
+      "bbox": {
+        "min_x": -153.01094131469728,
+        "max_x": 21.989058685302737,
+        "min_y": -30.69716796875001,
+        "max_y": 158.80283203125,
+        "min_z": -0.7444828152656555,
+        "max_z": 0.18526208400726318
+      },
+      "center": {
+        "x": -56.53771403774479,
+        "y": 57.641231434825144,
+        "z": -0.34702147457753196
+      },
+      "size": {
+        "x": 175.0,
+        "y": 189.5,
+        "z": 0.9297448992729187
+      },
+      "slices": [
+        2
+      ],
+      "id": 0
+    },
+    {
+      "component_id": 9514,
+      "node_count": 18133,
+      "height_mean": 3.714108467102051,
+      "height_min": 3.3517308235168457,
+      "height_max": 3.865222930908203,
+      "height_range": 0.5134921073913574,
+      "bbox": {
+        "min_x": -145.01094131469728,
+        "max_x": -99.81094131469726,
+        "min_y": 135.10283203125,
+        "max_y": 159.90283203125,
+        "min_z": 3.3517308235168457,
+        "max_z": 3.865222930908203
+      },
+      "center": {
+        "x": -113.016268618508,
+        "y": 147.31663007900826,
+        "z": 3.714108467102051
+      },
+      "size": {
+        "x": 45.30000000000002,
+        "y": 24.900000000000013,
+        "z": 0.5134921073913574
+      },
+      "slices": [
+        10
+      ],
+      "id": 1
+    }
+  ],
+  "summary": {
+    "total_nodes": 12095824,
+    "active_nodes": 12095824,
+    "flat_components": 19832,
+    "large_components": 248,
+    "regions_before_dedup": 248,
+    "regions_after_dedup": 3,
+    "regions_before_merge": 3,
+    "regions_after_merge": 2,
+    "output_regions": 2,
+    "elapsed_seconds": 3.724623680114746
+  },
+  "source": "/home/nuc/numa/PctPlanner/rsc/tomogram/chagee_planner.pickle",
+  "params": {
+    "cost_threshold": 35.0,
+    "slope_max": 0.2,
+    "min_nodes": 2000,
+    "dedup_iou": 0.0,
+    "merge_z_gap": 0.5
+  }
+}

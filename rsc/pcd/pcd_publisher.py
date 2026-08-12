@@ -1,6 +1,6 @@
 #!/usr/bin/python3
+import argparse
 import os
-import sys
 import numpy as np
 import open3d as o3d
 import rclpy
@@ -9,16 +9,19 @@ from std_msgs.msg import Header
 from sensor_msgs.msg import PointCloud2, PointField
 import sensor_msgs_py.point_cloud2 as pc2
 
-rsg_root = os.path.dirname(os.path.abspath(__file__)) + '/../..'
-
 class PCDPublisher(Node):
-    def __init__(self):
+    def __init__(self, pcd_file=None):
         super().__init__('pcd_publisher')
         self.publisher_ = self.create_publisher(PointCloud2, '/global_points', 10)
         timer_period = 10  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
 
-        pcd_file = os.path.join(rsg_root, 'rsc', 'pcd', 'chagee_downsampled.pcd')
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if pcd_file is None:
+            pcd_file = os.path.join(script_dir, 'chagee_downsampled.pcd')
+        elif not os.path.isabs(pcd_file):
+            pcd_file = os.path.join(script_dir, pcd_file)
+        pcd_file = os.path.abspath(pcd_file)
         self.get_logger().info(f"Loading PCD file from: {pcd_file}")
         
         try:
@@ -76,8 +79,13 @@ class PCDPublisher(Node):
             self.get_logger().info('Publishing point cloud')
 
 def main(args=None):
-    rclpy.init(args=args)
-    pcd_publisher = PCDPublisher()
+    parser = argparse.ArgumentParser(description='Publish a PCD file as PointCloud2.')
+    parser.add_argument('pcd_file', nargs='?', type=str, default=None,
+                        help='Path to the PCD file to publish. Defaults to chagee_downsampled.pcd.')
+    parsed_args, remaining_args = parser.parse_known_args(args)
+
+    rclpy.init(args=remaining_args)
+    pcd_publisher = PCDPublisher(pcd_file=parsed_args.pcd_file)
     try:
         rclpy.spin(pcd_publisher)
     except KeyboardInterrupt:
