@@ -178,6 +178,33 @@ class SparseTomogramPlanner(object):
 
         return self._search_and_convert(snapped_start, snapped_goal)
 
+    def plan_batch_from_indices(self, start_indices, goal_indices, num_threads=0):
+        """Plan many (start, goal) grid-index pairs in one C++ call.
+
+        Thread-parallel inside the C++ layer; the map graph is shared read-only
+        and each thread keeps its own A* scratch. Inputs are Kx3 int32 arrays
+        of [layer, row, col] indices. Returns a list aligned with the inputs:
+        an Nx3 world path array per pair, or None when the search fails.
+        """
+        starts = np.asarray(start_indices, dtype=np.int32).reshape(-1, 3)
+        goals = np.asarray(goal_indices, dtype=np.int32).reshape(-1, 3)
+        mats = self.astar.search_batch(starts, goals, int(num_threads))
+
+        paths = []
+        for mat in mats:
+            if mat.shape[0] == 0:
+                paths.append(None)
+                continue
+            path_xyz = np.zeros((mat.shape[0], 3), dtype=np.float64)
+            for i, (layer, row, col) in enumerate(mat):
+                idx = self.sparse_index_map[(int(layer), int(row), int(col))]
+                x = (col - self.offset[0]) * self.resolution + self.center[0]
+                y = (row - self.offset[1]) * self.resolution + self.center[1]
+                z = self.elev_g[idx] + TRAJECTORY_Z_OFFSET
+                path_xyz[i] = [x, y, z]
+            paths.append(path_xyz)
+        return paths
+
     def _search_and_convert(self, snapped_start, snapped_goal):
         success = self.astar.search(snapped_start, snapped_goal)
         if not success:

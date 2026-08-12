@@ -14,9 +14,9 @@ dense A*, `DenseElevationMap`, `OfflineElePlanner.init_map`, GPMP, or
 | Path | Purpose |
 |------|---------|
 | `tomography/scripts/tomography.py` | PCD → sparse tomogram export (`scene_map_sparse.pickle`) |
-| `planner/lib/src/sparse_a_star/` | C++ `SparseAstar` implementation and pybind interface |
-| `planner/scripts/sparse_planner_wrapper.py` | Python `SparseTomogramPlanner` |
-| `planner/scripts/Planner.py` | Offline CLI path planner on a sparse pickle |
+| `planner/lib/src/sparse_a_star/` | C++ `SparseAstar` implementation, pybind interface, and batch `SearchBatch` |
+| `planner/scripts/sparse_planner_wrapper.py` | Python `SparseTomogramPlanner` (`plan_batch_from_indices` for batched planning) |
+| `planner/scripts/Planner.py` | Offline CLI path planner on a sparse pickle (`--jobs` for batched planning) |
 | `planner/scripts/plan.py` | ROS node: loads sparse map, waits for `/start_pos`/`/end_pos`, publishes `/pct_path` |
 | `planner/scripts/plan_direct.py` | ROS node: loads sparse map directly, publishes `/pct_path2` |
 | `planner/scripts/plan_systemt.py` | ROS node: system pose-driven replanning on `/local_pose`, publishes `/pct_path2` |
@@ -94,6 +94,46 @@ python3 Planner.py \
   --output /tmp/path.npy
 ```
 
+Batched planning (many start/goal pairs in one C++ call):
+
+```bash
+python3 Planner.py \
+  --map scene_map_sparse_planner \
+  --json pairs.json --all-pairs --jobs 8 --output all_paths.json
+```
+
+`--all-pairs` routes through `SparseAstar::SearchBatch`: pairs are searched
+concurrently inside C++ (each thread owns a `SearchScratch` indexed by
+`node_id`; the graph `nodes_` is shared read-only — no processes or IPC).
+`--jobs` is the C++ worker-thread count (default: `hardware_concurrency`).
+Measured on `dshp_2` (7.75M nodes, 32 pairs incl. 9 disconnected failures):
+29.5s serial → 6.7s at 16 threads (~4.4x). Failed searches can be the most
+expensive (they explore the whole reachable component), so round-robin
+schedules pairs across threads.
+
+Batched planning notes:
+- Live progress: as each pair finishes, the C++ layer prints a
+  `[i/N] waypoints=..., length=... m` (or `Planning failed`) line immediately
+  (printf + fflush, so it streams even when stdout is piped). Threaded runs
+  print in completion order, not pair order. The C++ length is computed from
+  grid diffs scaled by `resolution_` and node heights, so it can differ from
+  the Python `path_length` in the last ~0.001 m due to float-accumulation
+  order.
+- Ctrl+C is interruptible: `search_batch` releases the Python GIL while the
+  batch runs and polls `PyErr_CheckSignals` from the wait loop; on SIGINT it
+  sets a cancel flag that workers check per-expansion, so a batch aborts
+  within ~1 s (exit 130, nothing written). Workers read the map graph
+  read-only, so releasing the GIL is safe.
+- Deterministic across thread counts (same `--jobs` 1 and 16 produce identical
+  output).
+- A* open-set tie-breaking differs from single-pair `Search`, so a batch path
+  can differ slightly from the one-at-a-time path (both valid; cost difference
+  is ~0.01% on measured cases).
+- `SparseAstar::Search` only calls `Reset()` when the previous search
+  *succeeded* (`if (!result_.empty())`), so consecutive failed searches leave
+  stale node `g/f/parent` that corrupt the next search. The batch scratch
+  resets per search and does not have this bug.
+
 System pose-driven planning:
 
 ```bash
@@ -152,3 +192,11 @@ There is **no** `"data"` field. `indices` is the single source of planning nodes
       `visited_nodes`, `path_nodes`.
 - [ ] RViz path starts/ends at requested positions, uses `elev_g` z values, and
       is an unoptimized polyline.
+- [ ] `Planner.py --all-pairs --jobs N` produces the same records as
+      `--jobs 1`, and its paths start/end at the snapped node world poses.
+- [ ] `--all-pairs` streams a `[i/N] waypoints=..., length=... m` line per pair
+      while the batch runs (visible mid-run in a live `tail`), then a
+      `Finished: ...` summary.
+- [ ] Ctrl+C during `--all-pairs` aborts within ~1 s (exit 130, prints
+      `Interrupted: batch canceled ...`), and a no-interrupt run still writes
+      the output JSON.
