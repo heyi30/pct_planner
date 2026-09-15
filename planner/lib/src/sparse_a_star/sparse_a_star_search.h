@@ -28,6 +28,14 @@ struct SparseNode {
   // Precomputed cross-layer targets (nullptr if none).
   SparseNode* up_target = nullptr;
   SparseNode* down_target = nullptr;
+
+  // Reverse cross-layer links: the nodes whose up/down target is this one. A
+  // cross-layer edge is stored on its source only, so without these the graph
+  // would be directed and a pair reachable in one direction would be
+  // unreachable in the other -- while the tomogram was pruned assuming
+  // undirected connectivity, so every node is nominally reachable. Lazily
+  // allocated: only the (few) gateway targets ever receive one.
+  std::unique_ptr<std::vector<SparseNode*>> back_links;
 };
 
 // Per-thread, per-search scratch for SearchBatch. Arrays are indexed by
