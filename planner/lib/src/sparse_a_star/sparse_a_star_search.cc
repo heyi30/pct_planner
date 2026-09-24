@@ -119,6 +119,22 @@ void SparseAstar::Init(const std::array<int, 3>& shape,
     }
   }
 
+  // Record every cross-layer edge on its target as well, so the graph is
+  // traversable in both directions -- matching the undirected connectivity the
+  // tomogram was pruned with.
+  for (auto& kv : nodes_) {
+    SparseNode* node = kv.second.get();
+    for (SparseNode* target : {node->up_target, node->down_target}) {
+      if (target == nullptr) {
+        continue;
+      }
+      if (!target->back_links) {
+        target->back_links = std::make_unique<std::vector<SparseNode*>>();
+      }
+      target->back_links->push_back(node);
+    }
+  }
+
   auto dt = std::chrono::duration_cast<std::chrono::microseconds>(
       std::chrono::high_resolution_clock::now() - t0);
   std::cout << "sparse_astar_init_ms = " << dt.count() / 1000.0 << std::endl;
@@ -192,6 +208,13 @@ std::vector<SparseNode*> SparseAstar::GetNeighbors(SparseNode* node) {
   }
   if (node->down_target != nullptr) {
     neighbors.push_back(node->down_target);
+  }
+
+  // Reverse cross-layer links, so a gateway edge is walkable both ways.
+  if (node->back_links) {
+    for (SparseNode* back : *node->back_links) {
+      neighbors.push_back(back);
+    }
   }
 
   return neighbors;
