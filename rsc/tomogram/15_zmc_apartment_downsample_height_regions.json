@@ -1,0 +1,84 @@
+{
+  "regions": [
+    {
+      "component_id": 805,
+      "node_count": 81561,
+      "height_mean": -1.2546350955963135,
+      "height_min": -1.6427592039108276,
+      "height_max": -0.2881283760070801,
+      "height_range": 1.3546308279037476,
+      "bbox": {
+        "min_x": -79.61351051330567,
+        "max_x": 44.786489486694336,
+        "min_y": -102.318408203125,
+        "max_y": 33.081591796875,
+        "min_z": -1.6427592039108276,
+        "max_z": -0.2881283760070801
+      },
+      "center": {
+        "x": -17.146529971134772,
+        "y": -40.514904077378624,
+        "z": -1.2546350955963135
+      },
+      "size": {
+        "x": 124.60000000000001,
+        "y": 135.6,
+        "z": 1.3546308279037476
+      },
+      "slices": [
+        14
+      ],
+      "id": 0
+    },
+    {
+      "component_id": 34,
+      "node_count": 74041,
+      "height_mean": -6.786425590515137,
+      "height_min": -6.936162948608398,
+      "height_max": -6.467965602874756,
+      "height_range": 0.4681973457336426,
+      "bbox": {
+        "min_x": -54.61351051330566,
+        "max_x": 17.98648948669434,
+        "min_y": -75.718408203125,
+        "max_y": -3.5184082031249986,
+        "min_z": -6.936162948608398,
+        "max_z": -6.467965602874756
+      },
+      "center": {
+        "x": -21.159283801078658,
+        "y": -37.09575588886669,
+        "z": -6.786425590515137
+      },
+      "size": {
+        "x": 72.8,
+        "y": 72.39999999999999,
+        "z": 0.4681973457336426
+      },
+      "slices": [
+        2
+      ],
+      "id": 1
+    }
+  ],
+  "summary": {
+    "total_nodes": 6667357,
+    "active_nodes": 6667357,
+    "flat_components": 5218,
+    "large_components": 163,
+    "regions_before_dedup": 163,
+    "regions_after_dedup": 2,
+    "regions_before_merge": 2,
+    "regions_after_merge": 2,
+    "output_regions": 2,
+    "elapsed_seconds": 1.9482934474945068
+  },
+  "source": "/home/nuc/ws/isaac_ai-demo/third_party/pct_planner/rsc/tomogram/15_zmc_apartment_downsample.pickle",
+  "params": {
+    "cost_threshold": 35.0,
+    "slope_max": 0.2,
+    "min_nodes": 2000,
+    "dedup_iou": 0.0,
+    "merge_z_gap": 0.5
+  }
+}

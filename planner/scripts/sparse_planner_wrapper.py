@@ -46,9 +46,43 @@ class SparseTomogramPlanner(object):
         file_path = self.tomo_dir + tomo_file + '.pickle'
         with open(file_path, 'rb') as handle:
             data_dict = pickle.load(handle)
-        self._initialize_from_dict(data_dict)
+        self._initialize_from_dict(data_dict, source_path=file_path)
 
-    def _initialize_from_dict(self, data_dict):
+    @staticmethod
+    def _index_cache_path(source_path):
+        return source_path + '.index.pickle'
+
+    def _build_sparse_index_map(self, source_path):
+        """``(layer, row, col) -> 行号``，优先读 pickle 同目录的缓存。
+
+        这个 dict 有 N 个节点就有 N 项（40M 节点的场景要建 38 s），而它只用来把
+        规划结果里的栅格坐标换回 ``elev_g`` 的行号。缓存文件与 pickle 同名加
+        ``.index.pickle`` 后缀；缓存比 pickle 旧就重建。缓存只是加速，删掉它会
+        回退到「重建一遍」的行为，不影响结果。
+        """
+        cache_path = self._index_cache_path(source_path)
+        if os.path.exists(cache_path) and os.path.getmtime(cache_path) >= os.path.getmtime(source_path):
+            try:
+                with open(cache_path, 'rb') as handle:
+                    cached = pickle.load(handle)
+                if cached.get('n_nodes') == self.indices.shape[0]:
+                    return cached['index_map']
+            except Exception as exc:
+                print(f'SparseTomogramPlanner: index cache unreadable ({exc}); rebuilding')
+
+        index_map = {
+            (int(self.indices[i, 0]), int(self.indices[i, 1]), int(self.indices[i, 2])): i
+            for i in range(self.indices.shape[0])
+        }
+        try:
+            with open(cache_path, 'wb') as handle:
+                pickle.dump({'n_nodes': self.indices.shape[0], 'index_map': index_map},
+                            handle, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception as exc:
+            print(f'SparseTomogramPlanner: could not write index cache ({exc})')
+        return index_map
+
+    def _initialize_from_dict(self, data_dict, source_path=None):
         if data_dict.get('format') != 'tomogram_sparse_v1':
             raise ValueError('expected tomogram_sparse_v1')
 
@@ -71,10 +105,13 @@ class SparseTomogramPlanner(object):
             == self.indices.shape[0]
         )
 
-        self.sparse_index_map = {
-            (int(self.indices[i, 0]), int(self.indices[i, 1]), int(self.indices[i, 2])): i
-            for i in range(self.indices.shape[0])
-        }
+        if source_path is None:
+            self.sparse_index_map = {
+                (int(self.indices[i, 0]), int(self.indices[i, 1]), int(self.indices[i, 2])): i
+                for i in range(self.indices.shape[0])
+            }
+        else:
+            self.sparse_index_map = self._build_sparse_index_map(source_path)
 
         shape_array = np.array([self.n_slice, self.map_dim[0], self.map_dim[1]], dtype=np.int32)
         self.astar.init(
